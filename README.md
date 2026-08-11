@@ -6,7 +6,7 @@
 [![libvirt](https://img.shields.io/badge/libvirt-isolated%20NAT-2F8F9D)](https://libvirt.org/)
 [![Security](https://img.shields.io/badge/security-defense--in--depth-success)](SECURITY.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![CI](https://github.com/YOUR_GITHUB_USERNAME/kvm-qemu-safebox/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/kvm-qemu-safebox/actions/workflows/ci.yml)
+[![CI](https://github.com/BlackRabbitZ/kvm-qemu-safebox/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackRabbitZ/kvm-qemu-safebox/actions/workflows/ci.yml)
 
 **KVM-QEMU-SafeBox** baut eine bewusst minimal integrierte Desktop-VM mit **Debian 13 (Trixie) + XFCE**. Die VM hat Internetzugang, soll aber standardmäßig **keinen normalen Zugriff auf Host, LAN, Host-Dateien, USB-/PCI-Geräte, Zwischenablage oder Host/Gast-Dateitransfer** besitzen.
 
@@ -110,18 +110,17 @@ Debian 13 „Trixie“ ist die Zielversion des Gasts.
 ## 2. Repository klonen
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/kvm-qemu-safebox.git
+git clone https://github.com/BlackRabbitZ/kvm-qemu-safebox.git
 cd kvm-qemu-safebox
 ```
 
-Vor deiner ersten Veröffentlichung einmal deine Attribution eintragen:
+Die Original-Attribution ist bereits fest auf **BlackRabbitZ** und dieses Repository gesetzt. Für eine normale Installation musst du daran nichts ändern.
+
+Optional kannst du die Release-/Attributionsprüfung ausführen:
 
 ```bash
-./tools/configure-project.sh DEIN_GITHUB_USERNAME "DEIN NAME"
 make release-check
 ```
-
-Das aktualisiert unter anderem `NOTICE`, CI-Badge, Clone-URL und die Dokumentations-URL des Firewall-Services. Danach sollte `make release-check` ohne Release-Platzhalter durchlaufen.
 
 ## 3. Host-Abhängigkeiten installieren
 
@@ -206,7 +205,7 @@ Nach der Debian-Installation in das frisch installierte System booten. Klone die
 ```bash
 sudo apt update
 sudo apt install -y git
-git clone https://github.com/YOUR_GITHUB_USERNAME/kvm-qemu-safebox.git
+git clone https://github.com/BlackRabbitZ/kvm-qemu-safebox.git
 cd kvm-qemu-safebox
 sudo ./guest/harden.sh
 sudo reboot
@@ -412,7 +411,7 @@ kvm-qemu-safebox/
 ├── install/
 │   └── install-host.sh
 ├── tools/
-│   └── configure-project.sh
+│   └── verify-attribution.sh
 ├── network/
 │   ├── safebox-net.xml
 │   ├── safebox-guard.nft
@@ -447,13 +446,19 @@ kvm-qemu-safebox/
 
 # Lizenz und Original-Attribution
 
-Dieses Projekt steht unter der **Apache License 2.0**. Zusätzlich enthält das Repository eine [`NOTICE`](NOTICE)-Datei mit dem Original-Repository.
+Dieses Projekt steht unter der **Apache License 2.0**.
 
-Bei weitergegebenen abgeleiteten Werken müssen die Bedingungen der Apache-2.0-Lizenz eingehalten werden, einschließlich der dort vorgesehenen Änderungs- und Attribution-Hinweise. Damit der Originalhinweis korrekt ist, **vor der ersten Veröffentlichung** ausführen:
+**Originalautor / Copyright:** BlackRabbitZ  
+**Original-Repository:** https://github.com/BlackRabbitZ/kvm-qemu-safebox
+
+Zusätzlich enthält das Repository eine [`NOTICE`](NOTICE)-Datei mit der dauerhaften Original-Attribution. Bei der Weitergabe einer veränderten oder abgeleiteten Version müssen die Bedingungen der Apache License 2.0 eingehalten werden. Dazu gehören insbesondere die dort vorgesehenen Lizenz- und Copyright-Hinweise, die Kennzeichnung geänderter Dateien sowie die Übernahme der einschlägigen Attribution-Hinweise aus `NOTICE` in lesbarer Form.
+
+Der Hinweis auf **BlackRabbitZ** und das Original-Repository ist im Projekt fest hinterlegt und soll bei weitergegebenen abgeleiteten Versionen erhalten bleiben.
+
+Prüfen kannst du das jederzeit mit:
 
 ```bash
-./tools/configure-project.sh DEIN_GITHUB_USERNAME "DEIN NAME"
 make release-check
 ```
 
-Siehe auch [`ATTRIBUTION.md`](ATTRIBUTION.md).
+Siehe auch [`ATTRIBUTION.md`](ATTRIBUTION.md) und [`NOTICE`](NOTICE).
