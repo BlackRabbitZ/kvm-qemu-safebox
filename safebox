@@ -74,9 +74,16 @@ set_root_readonly() {
 }
 
 xml_escape_check() {
-  local value=$1
-  [[ "$value" != *'&'* && "$value" != *'<'* && "$value" != *'>'* && "$value" != *"'"* && "$value" != *'|'* && "$value" != *'\\'* && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || \
-    die "Pfade mit &, <, >, ', |, Backslash oder Zeilenumbruch werden in v0.1 nicht unterstützt: $value"
+  local value=$1 forbidden
+
+  # XML-/Template-Sonderzeichen und Steuerzeichen sind in v0.1 absichtlich
+  # nicht zugelassen. Die Schleife ist lesbarer als eine lange [[ ... ]]-Kette
+  # und vermeidet mehrdeutige Quote-/Escape-Kombinationen.
+  for forbidden in '&' '<' '>' $'\x27' '|' $'\\' $'\n' $'\r'; do
+    if [[ "$value" == *"$forbidden"* ]]; then
+      die "Pfade mit &, <, >, ', |, Backslash oder Zeilenumbruch werden in v0.1 nicht unterstützt: $value"
+    fi
+  done
 }
 
 render_template() {
@@ -156,8 +163,9 @@ create_base() {
   xml="$(mktemp --suffix=.xml)"
   render_template "$ROOT/vm/templates/installer.xml.in" "$xml" "safebox-installer" "$SAFEBOX_BASE_IMAGE" "" "$SAFEBOX_INSTALL_ISO"
 
-  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo safebox-installer >/dev/null 2>&1 && \
-    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" undefine safebox-installer >/dev/null || true
+  if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo safebox-installer >/dev/null 2>&1; then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" undefine safebox-installer >/dev/null
+  fi
   "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" define "$xml" >/dev/null
   rm -f "$xml"
   "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" start safebox-installer >/dev/null

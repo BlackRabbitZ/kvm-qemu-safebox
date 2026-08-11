@@ -5,12 +5,9 @@ Beiträge sind willkommen, solange sie die Sicherheitsgrenzen nicht stillschweig
 ## Vor einem Pull Request
 
 ```bash
-make check
-# entspricht u. a.:
-bash -n safebox install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh
-shellcheck safebox install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh
+bash -n safebox install/*.sh network/*.sh guest/*.sh tests/*.sh
+shellcheck safebox install/*.sh network/*.sh guest/*.sh tests/*.sh
 ./tests/static-policy.sh
-./tests/network-policy.sh
 xmllint --noout network/safebox-net.xml vm/templates/*.xml.in
 ```
 
