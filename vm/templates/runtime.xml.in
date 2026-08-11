@@ -1,0 +1,67 @@
+<domain type='kvm'>
+  <name>__DOMAIN_NAME__</name>
+  <memory unit='MiB' dumpCore='off'>__RAM_MIB__</memory>
+  <currentMemory unit='MiB'>__RAM_MIB__</currentMemory>
+  <memoryBacking>
+    <nosharepages/>
+  </memoryBacking>
+  <vcpu placement='static'>__VCPUS__</vcpu>
+
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+
+  <features>
+    <acpi/>
+    <apic/>
+    <pmu state='off'/>
+    <vmport state='off'/>
+  </features>
+
+  <cpu mode='host-model' check='partial'>
+    <!-- Keine Nested-Virtualisierung im Sandbox-Gast. -->
+    <feature policy='disable' name='vmx'/>
+    <feature policy='disable' name='svm'/>
+  </cpu>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <pm>
+    <suspend-to-mem enabled='no'/>
+    <suspend-to-disk enabled='no'/>
+  </pm>
+
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' cache='none' io='native' discard='unmap'/>
+      <source file='__DISK_IMAGE__'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+
+    <controller type='pci' index='0' model='pcie-root'/>
+    <controller type='usb' model='none'/>
+
+__NETWORK_BLOCK__
+
+    <!-- Reine virtuelle Eingabe; kein echtes Host-USB-Gerät wird durchgereicht. -->
+    <input type='keyboard' bus='virtio'/>
+    <input type='tablet' bus='virtio'/>
+
+    <graphics type='spice' autoport='yes'>
+      <listen type='none'/>
+      <clipboard copypaste='no'/>
+      <filetransfer enable='no'/>
+      <gl enable='no'/>
+    </graphics>
+
+    <video>
+      <model type='virtio' heads='1' primary='yes'/>
+    </video>
+
+    <memballoon model='none'/>
+  </devices>
+</domain>

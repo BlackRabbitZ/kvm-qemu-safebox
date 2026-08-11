@@ -1,0 +1,16 @@
+[Unit]
+Description=KVM-QEMU-SafeBox host/LAN guard
+Documentation=https://github.com/YOUR_GITHUB_USERNAME/kvm-qemu-safebox
+After=nftables.service
+Before=libvirtd.service virtqemud.service virtnetworkd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/nft delete table inet safebox_guard
+ExecStart=/usr/sbin/nft -f /etc/safebox/safebox-guard.nft
+ExecReload=/bin/sh -c '/usr/sbin/nft delete table inet safebox_guard 2>/dev/null || true; /usr/sbin/nft -f /etc/safebox/safebox-guard.nft'
+ExecStop=-/usr/sbin/nft delete table inet safebox_guard
+
+[Install]
+WantedBy=multi-user.target

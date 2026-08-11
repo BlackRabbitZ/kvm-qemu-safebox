@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$ROOT/config/defaults.conf"
+
+SUDO=()
+if [[ ${EUID} -ne 0 ]]; then
+  SUDO=(sudo)
+fi
+
+usage() {
+  cat <<USAGE
+KVM-QEMU-SafeBox ${SAFEBOX_VERSION}
+
+Verwendung:
+  ./safebox setup-network
+  ./safebox create-base /pfad/debian-13.x.x-amd64-netinst.iso
+  ./safebox seal-base
+  ./safebox start disposable
+  ./safebox start persistent
+  ./safebox start offline
+  ./safebox viewer [DOMAIN]
+  ./safebox status
+  ./safebox doctor
+  ./safebox cleanup-sessions
+
+Modi:
+  disposable  Temporäres QCOW2-Overlay; wird nach sauberem VM-Ende gelöscht.
+  persistent  Dauerhaftes Overlay; Basis-Image bleibt unverändert.
+  offline     Wie disposable, aber ohne virtuelle Netzwerkkarte.
+USAGE
+}
+
+die() { echo "FEHLER: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "Benötigtes Programm fehlt: $1"; }
+
+qemu_user() {
+  if id -u libvirt-qemu >/dev/null 2>&1; then printf '%s\n' libvirt-qemu
+  elif id -u qemu >/dev/null 2>&1; then printf '%s\n' qemu
+  else printf '%s\n' root
+  fi
+}
+
+qemu_group() {
+  if getent group libvirt-qemu >/dev/null 2>&1; then printf '%s\n' libvirt-qemu
+  elif getent group qemu >/dev/null 2>&1; then printf '%s\n' qemu
+  elif getent group kvm >/dev/null 2>&1; then printf '%s\n' kvm
+  else printf '%s\n' root
+  fi
+}
+
+prepare_storage() {
+  local group
+  group="$(qemu_group)"
+  # Verzeichnisse bleiben root-owned. Der QEMU-Prozess darf Dateien benutzen,
+  # aber nicht beliebig Verzeichniseinträge anlegen/umbenennen/löschen.
+  "${SUDO[@]}" install -d -m 0750 -o root -g "$group" "$SAFEBOX_STORAGE" "$SAFEBOX_SESSIONS_DIR"
+}
+
+set_qemu_owner() {
+  local file=$1 mode=${2:-0600} user group
+  user="$(qemu_user)"; group="$(qemu_group)"
+  "${SUDO[@]}" chown "$user:$group" "$file"
+  "${SUDO[@]}" chmod "$mode" "$file"
+}
+
+set_root_readonly() {
+  local file=$1 group
+  group="$(qemu_group)"
+  "${SUDO[@]}" chown "root:$group" "$file"
+  "${SUDO[@]}" chmod 0440 "$file"
+}
+
+xml_escape_check() {
+  local value=$1
+  [[ "$value" != *'&'* && "$value" != *'<'* && "$value" != *'>'* && "$value" != *"'"* && "$value" != *'|'* && "$value" != *'\\'* && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || \
+    die "Pfade mit &, <, >, ', |, Backslash oder Zeilenumbruch werden in v0.1 nicht unterstützt: $value"
+}
+
+render_template() {
+  local template=$1 output=$2 domain=$3 disk=$4 network_block=$5 iso=${6:-}
+  xml_escape_check "$disk"
+  [[ -z "$iso" ]] || xml_escape_check "$iso"
+  sed \
+    -e "s|__DOMAIN_NAME__|$domain|g" \
+    -e "s|__RAM_MIB__|$SAFEBOX_RAM_MIB|g" \
+    -e "s|__VCPUS__|$SAFEBOX_VCPUS|g" \
+    -e "s|__DISK_IMAGE__|$disk|g" \
+    -e "s|__ISO_IMAGE__|$iso|g" \
+    "$template" > "$output.tmp"
+
+  awk -v block="$network_block" '
+    /__NETWORK_BLOCK__/ { print block; next }
+    { print }
+  ' "$output.tmp" > "$output"
+  rm -f "$output.tmp"
+}
+
+running_safebox_domains() {
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --name 2>/dev/null | grep -E '^safebox-(installer|persistent|disposable-|offline-)' || true
+}
+
+assert_no_running_safebox() {
+  local running
+  running="$(running_safebox_domains)"
+  [[ -z "$running" ]] || die "Es läuft bereits eine SafeBox-Domain: $running. Für v0.1 ist absichtlich nur eine Sitzung gleichzeitig vorgesehen."
+}
+
+setup_network() {
+  need virsh
+
+  # Guard zuerst laden. Die nftables-Regel kann bereits existieren, bevor die
+  # virtuelle Bridge erzeugt wird; so gibt es beim Netzstart kein Schutzfenster.
+  "${SUDO[@]}" "$ROOT/network/install-firewall-service.sh"
+
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$SAFEBOX_NETWORK" >/dev/null 2>&1 || \
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-define "$ROOT/network/safebox-net.xml" >/dev/null
+
+  if ! "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$SAFEBOX_NETWORK" 2>/dev/null | grep -qE 'Active:[[:space:]]+yes|Aktiv:[[:space:]]+ja'; then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-start "$SAFEBOX_NETWORK" >/dev/null
+  fi
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-autostart "$SAFEBOX_NETWORK" >/dev/null
+  echo "[OK] SafeBox-Netzwerk und persistenter Host/LAN-Guard eingerichtet."
+}
+
+create_base() {
+  local iso=${1:-}
+  [[ -n "$iso" ]] || die "ISO-Pfad fehlt. Beispiel: ./safebox create-base ~/Downloads/debian-13.6.0-amd64-netinst.iso"
+  iso="$(readlink -f -- "$iso")"
+  [[ -f "$iso" ]] || die "ISO nicht gefunden: $iso"
+  need qemu-img; need virsh
+  assert_no_running_safebox
+
+  setup_network
+  prepare_storage
+
+  # ISO in den libvirt-Storage kopieren. Das vermeidet DAC/AppArmor-Probleme
+  # mit ISO-Dateien in Home-Verzeichnissen.
+  "${SUDO[@]}" cp -- "$iso" "$SAFEBOX_INSTALL_ISO"
+  set_root_readonly "$SAFEBOX_INSTALL_ISO"
+
+  if [[ ! -f "$SAFEBOX_BASE_IMAGE" ]]; then
+    "${SUDO[@]}" qemu-img create -f qcow2 "$SAFEBOX_BASE_IMAGE" "$SAFEBOX_DISK_SIZE" >/dev/null
+    set_qemu_owner "$SAFEBOX_BASE_IMAGE" 0600
+  else
+    local mode
+    mode="$("${SUDO[@]}" stat -c '%a' "$SAFEBOX_BASE_IMAGE")"
+    [[ "$mode" != "440" ]] || die "Das Basis-Image ist bereits versiegelt. Es wird nicht überschrieben: $SAFEBOX_BASE_IMAGE"
+    echo "[INFO] Unversiegeltes Basis-Image wird weiterverwendet: $SAFEBOX_BASE_IMAGE"
+    set_qemu_owner "$SAFEBOX_BASE_IMAGE" 0600
+  fi
+
+  local xml
+  xml="$(mktemp --suffix=.xml)"
+  render_template "$ROOT/vm/templates/installer.xml.in" "$xml" "safebox-installer" "$SAFEBOX_BASE_IMAGE" "" "$SAFEBOX_INSTALL_ISO"
+
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo safebox-installer >/dev/null 2>&1 && \
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" undefine safebox-installer >/dev/null || true
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" define "$xml" >/dev/null
+  rm -f "$xml"
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" start safebox-installer >/dev/null
+
+  echo "[OK] Installer-VM läuft."
+  echo "[INFO] Anzeige öffnen mit: ./safebox viewer safebox-installer"
+  if command -v virt-viewer >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    virt-viewer --connect "$SAFEBOX_CONNECT_URI" --wait safebox-installer >/dev/null 2>&1 &
+  fi
+}
+
+seal_base() {
+  need virsh; need qemu-img
+  [[ -f "$SAFEBOX_BASE_IMAGE" ]] || die "Basis-Image fehlt."
+  if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo safebox-installer >/dev/null 2>&1; then
+    local state
+    state="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" domstate safebox-installer 2>/dev/null || true)"
+    if grep -qiE 'running|laufend|paused|angehalten' <<<"$state"; then
+      die "Installer-VM läuft noch. Debian vollständig herunterfahren und erneut seal-base ausführen."
+    fi
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" undefine safebox-installer >/dev/null || true
+  fi
+  "${SUDO[@]}" qemu-img check "$SAFEBOX_BASE_IMAGE"
+  set_root_readonly "$SAFEBOX_BASE_IMAGE"
+  "${SUDO[@]}" rm -f -- "$SAFEBOX_INSTALL_ISO"
+  echo "[OK] Basis-Image geprüft und schreibgeschützt: $SAFEBOX_BASE_IMAGE"
+}
+
+network_block() {
+  cat <<'XML'
+    <interface type='network'>
+      <mac address='52:54:00:77:00:10'/>
+      <source network='safebox-net'/>
+      <model type='virtio'/>
+      <rom bar='off'/>
+      <port isolated='yes'/>
+    </interface>
+XML
+}
+
+start_vm() {
+  local mode=${1:-disposable}
+  [[ "$mode" =~ ^(disposable|persistent|offline)$ ]] || die "Unbekannter Modus: $mode"
+  need qemu-img; need virsh
+  [[ -f "$SAFEBOX_BASE_IMAGE" ]] || die "Basis-Image fehlt. Zuerst create-base und seal-base ausführen."
+  [[ "$("${SUDO[@]}" stat -c '%a' "$SAFEBOX_BASE_IMAGE")" == "440" ]] || die "Basis-Image ist nicht versiegelt (Mode 0440). Zuerst ./safebox seal-base ausführen."
+  assert_no_running_safebox
+  prepare_storage
+
+  if [[ "$mode" != "offline" ]]; then
+    setup_network
+  fi
+
+  local stamp domain disk netblock disposable=0
+  stamp="$(date +%Y%m%d-%H%M%S)-$$"
+  netblock="$(network_block)"
+
+  case "$mode" in
+    persistent)
+      domain="safebox-persistent"
+      disk="$SAFEBOX_PERSISTENT_IMAGE"
+      if [[ ! -f "$disk" ]]; then
+        "${SUDO[@]}" qemu-img create -f qcow2 -F qcow2 -b "$SAFEBOX_BASE_IMAGE" "$disk" >/dev/null
+      fi
+      set_qemu_owner "$disk" 0600
+      ;;
+    disposable)
+      domain="safebox-disposable-$stamp"
+      disk="$SAFEBOX_SESSIONS_DIR/$domain.qcow2"
+      disposable=1
+      "${SUDO[@]}" qemu-img create -f qcow2 -F qcow2 -b "$SAFEBOX_BASE_IMAGE" "$disk" >/dev/null
+      set_qemu_owner "$disk" 0600
+      ;;
+    offline)
+      domain="safebox-offline-$stamp"
+      disk="$SAFEBOX_SESSIONS_DIR/$domain.qcow2"
+      disposable=1
+      netblock=""
+      "${SUDO[@]}" qemu-img create -f qcow2 -F qcow2 -b "$SAFEBOX_BASE_IMAGE" "$disk" >/dev/null
+      set_qemu_owner "$disk" 0600
+      ;;
+  esac
+
+  local xml
+  xml="$(mktemp --suffix=.xml)"
+  render_template "$ROOT/vm/templates/runtime.xml.in" "$xml" "$domain" "$disk" "$netblock"
+
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" create "$xml" >/dev/null
+  rm -f "$xml"
+  echo "[OK] $domain gestartet ($mode)."
+
+  if command -v virt-viewer >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    virt-viewer --connect "$SAFEBOX_CONNECT_URI" --wait "$domain" || true
+  else
+    echo "[INFO] GUI öffnen mit: ./safebox viewer $domain"
+  fi
+
+  if [[ "$disposable" -eq 1 ]]; then
+    echo "[INFO] Warte auf das Ende der temporären VM, damit das Overlay sicher entfernt werden kann."
+    while "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo "$domain" >/dev/null 2>&1; do
+      sleep 2
+    done
+    "${SUDO[@]}" rm -f -- "$disk"
+    echo "[OK] Temporäres Overlay gelöscht: $disk"
+  fi
+}
+
+viewer() {
+  local domain=${1:-safebox-persistent}
+  need virt-viewer
+  exec virt-viewer --connect "$SAFEBOX_CONNECT_URI" --wait "$domain"
+}
+
+status() {
+  echo "== Domains =="
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --all || true
+  echo
+  echo "== Netzwerk =="
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$SAFEBOX_NETWORK" || true
+  echo
+  echo "== Firewall =="
+  "${SUDO[@]}" nft list table inet safebox_guard 2>/dev/null || echo "safebox_guard nicht aktiv"
+  echo
+  echo "== Firewall-Service =="
+  "${SUDO[@]}" systemctl --no-pager --full status safebox-firewall.service 2>/dev/null || true
+}
+
+cleanup_sessions() {
+  [[ -d "$SAFEBOX_SESSIONS_DIR" ]] || { echo "[OK] Keine Session-Dateien vorhanden."; return; }
+  local file domain
+  shopt -s nullglob
+  for file in "$SAFEBOX_SESSIONS_DIR"/safebox-*.qcow2; do
+    domain="$(basename "$file" .qcow2)"
+    if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo "$domain" >/dev/null 2>&1; then
+      echo "[SKIP] Noch aktive/definierte Domain: $domain"
+    else
+      "${SUDO[@]}" rm -f -- "$file"
+      echo "[OK] Verwaistes Overlay gelöscht: $file"
+    fi
+  done
+}
+
+case ${1:-help} in
+  setup-network) setup_network ;;
+  create-base) shift; create_base "${1:-}" ;;
+  seal-base) seal_base ;;
+  start) shift; start_vm "${1:-disposable}" ;;
+  viewer) shift; viewer "${1:-safebox-persistent}" ;;
+  status) status ;;
+  doctor) exec "$ROOT/tests/doctor.sh" ;;
+  cleanup-sessions) cleanup_sessions ;;
+  help|-h|--help) usage ;;
+  *) usage; exit 1 ;;
+esac
