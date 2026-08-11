@@ -67,7 +67,7 @@ else
   warn "Basis-Image noch nicht erstellt"
 fi
 
-if "$ROOT/tests/static-policy.sh" >/dev/null && "$ROOT/tests/network-policy.sh" >/dev/null; then
+if bash "$ROOT/tests/static-policy.sh" >/dev/null && bash "$ROOT/tests/network-policy.sh" >/dev/null; then
   ok "Statische VM-/Netzwerk-Sicherheitsrichtlinien bestanden"
 else
   bad "Statische VM-/Netzwerk-Sicherheitsrichtlinie fehlgeschlagen"

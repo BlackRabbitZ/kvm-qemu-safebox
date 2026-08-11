@@ -116,6 +116,8 @@ cd kvm-qemu-safebox
 
 Die Original-Attribution ist bereits fest auf **BlackRabbitZ** und dieses Repository gesetzt. Für eine normale Installation musst du daran nichts ändern.
 
+> **Hinweis zu Windows/GitHub Desktop:** Windows-Dateisysteme übernehmen das Unix-Executable-Bit beim ersten Commit nicht immer. SafeBox ruft Repository-Skripte deshalb bewusst über `bash` auf. Die CI und die dokumentierten Befehle funktionieren damit auch dann, wenn eine `.sh`-Datei im Git-Index als `100644` statt `100755` gespeichert wurde.
+
 Optional kannst du die Release-/Attributionsprüfung ausführen:
 
 ```bash
@@ -125,7 +127,7 @@ make release-check
 ## 3. Host-Abhängigkeiten installieren
 
 ```bash
-sudo ./install/install-host.sh
+sudo bash ./install/install-host.sh
 ```
 
 Danach einmal ab- und wieder anmelden, falls dein Benutzer neu zu `libvirt`/`kvm` hinzugefügt wurde.
@@ -133,7 +135,7 @@ Danach einmal ab- und wieder anmelden, falls dein Benutzer neu zu `libvirt`/`kvm
 Prüfen:
 
 ```bash
-./safebox doctor
+bash ./safebox doctor
 ```
 
 ## 4. Debian-ISO herunterladen
@@ -149,7 +151,7 @@ Beispielpfad:
 ## 5. SafeBox-Netzwerk einrichten
 
 ```bash
-./safebox setup-network
+bash ./safebox setup-network
 ```
 
 Das erstellt:
@@ -174,13 +176,13 @@ virsh -c qemu:///system net-dumpxml safebox-net
 ## 6. Basis-VM erstellen
 
 ```bash
-./safebox create-base ~/Downloads/debian-13.6.0-amd64-netinst.iso
+bash ./safebox create-base ~/Downloads/debian-13.6.0-amd64-netinst.iso
 ```
 
 Falls sich das Fenster nicht automatisch öffnet:
 
 ```bash
-./safebox viewer safebox-installer
+bash ./safebox viewer safebox-installer
 ```
 
 ### Debian-Installation
@@ -207,7 +209,7 @@ sudo apt update
 sudo apt install -y git
 git clone https://github.com/BlackRabbitZ/kvm-qemu-safebox.git
 cd kvm-qemu-safebox
-sudo ./guest/harden.sh
+sudo bash ./guest/harden.sh
 sudo reboot
 ```
 
@@ -218,7 +220,7 @@ Nach dem Neustart kurz prüfen, dass XFCE, Maus/Tastatur und Internet funktionie
 Auf dem **Host**:
 
 ```bash
-./safebox seal-base
+bash ./safebox seal-base
 ```
 
 Das führt `qemu-img check` aus, entfernt die kopierte Installer-ISO und setzt das Basisimage auf `root:<QEMU-Gruppe>` mit `0440` (schreibgeschützt). Alle späteren persistenten oder temporären Sitzungen verwenden QCOW2-Overlays und schreiben nicht in die Basis.
@@ -237,7 +239,7 @@ Das Gastskript:
 - deaktiviert IPv6 für das IPv4-only-Netzprofil von v0.1
 
 > [!IMPORTANT]
-> `./safebox start ...` verweigert den Start, solange das Basisimage nicht auf `0440` versiegelt ist. Damit wird verhindert, dass die vermeintlich unveränderliche Basis versehentlich als Arbeitsdisk benutzt wird.
+> `bash ./safebox start ...` verweigert den Start, solange das Basisimage nicht auf `0440` versiegelt ist. Damit wird verhindert, dass die vermeintlich unveränderliche Basis versehentlich als Arbeitsdisk benutzt wird.
 
 ---
 
@@ -246,7 +248,7 @@ Das Gastskript:
 ## Disposable
 
 ```bash
-./safebox start disposable
+bash ./safebox start disposable
 ```
 
 ```text
@@ -262,7 +264,7 @@ debian13-xfce-base.qcow2   [read-only]
 ## Persistent
 
 ```bash
-./safebox start persistent
+bash ./safebox start persistent
 ```
 
 Das Overlay:
@@ -276,7 +278,7 @@ bleibt erhalten. Das Basisimage wird trotzdem nicht verändert.
 ## Offline
 
 ```bash
-./safebox start offline
+bash ./safebox start offline
 ```
 
 Hier wird **gar keine virtuelle Netzwerkkarte** in die Domain eingefügt.
@@ -284,7 +286,7 @@ Hier wird **gar keine virtuelle Netzwerkkarte** in die Domain eingefügt.
 ## Status
 
 ```bash
-./safebox status
+bash ./safebox status
 ```
 
 ## Sicherheitscheck
@@ -292,14 +294,14 @@ Hier wird **gar keine virtuelle Netzwerkkarte** in die Domain eingefügt.
 Auf dem Host:
 
 ```bash
-./safebox doctor
+bash ./safebox doctor
 make check
 ```
 
 Innerhalb einer gestarteten Online-SafeBox kann zusätzlich geprüft werden, ob Internet funktioniert, private Ziele blockiert sind und TCP/22 des Host-Gateways nicht erreichbar ist:
 
 ```bash
-./tests/guest-network-test.sh
+bash ./tests/guest-network-test.sh
 ```
 
 ## Verwaiste Disposable-Overlays bereinigen
@@ -307,7 +309,7 @@ Innerhalb einer gestarteten Online-SafeBox kann zusätzlich geprüft werden, ob 
 Falls ein Startskript hart beendet wurde:
 
 ```bash
-./safebox cleanup-sessions
+bash ./safebox cleanup-sessions
 ```
 
 Noch aktive/definierte Domains werden dabei übersprungen.
@@ -359,7 +361,7 @@ Die Domain deaktiviert Nested Virtualization (`vmx`/`svm`), die virtuelle PMU un
 
 ## QEMU seccomp
 
-Aktuelle libvirt/QEMU-Stacks können QEMU mit seccomp-Sandboxing starten. SafeBox prüft mit `./safebox doctor`, ob die lokale QEMU-Version `-sandbox` unterstützt. SafeBox fügt **keine rohe QEMU-Commandline** in das Domain-XML ein, sondern überlässt die Prozess-Sandbox dem libvirt-Sicherheitsstack des Hosts.
+Aktuelle libvirt/QEMU-Stacks können QEMU mit seccomp-Sandboxing starten. SafeBox prüft mit `bash ./safebox doctor`, ob die lokale QEMU-Version `-sandbox` unterstützt. SafeBox fügt **keine rohe QEMU-Commandline** in das Domain-XML ein, sondern überlässt die Prozess-Sandbox dem libvirt-Sicherheitsstack des Hosts.
 
 ## AppArmor
 

@@ -7,7 +7,7 @@ Beiträge sind willkommen, solange sie die Sicherheitsgrenzen nicht stillschweig
 ```bash
 bash -n safebox install/*.sh network/*.sh guest/*.sh tests/*.sh
 shellcheck safebox install/*.sh network/*.sh guest/*.sh tests/*.sh
-./tests/static-policy.sh
+bash ./tests/static-policy.sh
 xmllint --noout network/safebox-net.xml vm/templates/*.xml.in
 ```
 

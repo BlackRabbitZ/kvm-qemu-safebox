@@ -15,16 +15,16 @@ usage() {
 KVM-QEMU-SafeBox ${SAFEBOX_VERSION}
 
 Verwendung:
-  ./safebox setup-network
-  ./safebox create-base /pfad/debian-13.x.x-amd64-netinst.iso
-  ./safebox seal-base
-  ./safebox start disposable
-  ./safebox start persistent
-  ./safebox start offline
-  ./safebox viewer [DOMAIN]
-  ./safebox status
-  ./safebox doctor
-  ./safebox cleanup-sessions
+  bash ./safebox setup-network
+  bash ./safebox create-base /pfad/debian-13.x.x-amd64-netinst.iso
+  bash ./safebox seal-base
+  bash ./safebox start disposable
+  bash ./safebox start persistent
+  bash ./safebox start offline
+  bash ./safebox viewer [DOMAIN]
+  bash ./safebox status
+  bash ./safebox doctor
+  bash ./safebox cleanup-sessions
 
 Modi:
   disposable  Temporäres QCOW2-Overlay; wird nach sauberem VM-Ende gelöscht.
@@ -120,7 +120,7 @@ setup_network() {
 
   # Guard zuerst laden. Die nftables-Regel kann bereits existieren, bevor die
   # virtuelle Bridge erzeugt wird; so gibt es beim Netzstart kein Schutzfenster.
-  "${SUDO[@]}" "$ROOT/network/install-firewall-service.sh"
+  "${SUDO[@]}" bash "$ROOT/network/install-firewall-service.sh"
 
   "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$SAFEBOX_NETWORK" >/dev/null 2>&1 || \
     "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-define "$ROOT/network/safebox-net.xml" >/dev/null
@@ -134,7 +134,7 @@ setup_network() {
 
 create_base() {
   local iso=${1:-}
-  [[ -n "$iso" ]] || die "ISO-Pfad fehlt. Beispiel: ./safebox create-base ~/Downloads/debian-13.6.0-amd64-netinst.iso"
+  [[ -n "$iso" ]] || die "ISO-Pfad fehlt. Beispiel: bash ./safebox create-base ~/Downloads/debian-13.6.0-amd64-netinst.iso"
   iso="$(readlink -f -- "$iso")"
   [[ -f "$iso" ]] || die "ISO nicht gefunden: $iso"
   need qemu-img; need virsh
@@ -171,7 +171,7 @@ create_base() {
   "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" start safebox-installer >/dev/null
 
   echo "[OK] Installer-VM läuft."
-  echo "[INFO] Anzeige öffnen mit: ./safebox viewer safebox-installer"
+  echo "[INFO] Anzeige öffnen mit: bash ./safebox viewer safebox-installer"
   if command -v virt-viewer >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     virt-viewer --connect "$SAFEBOX_CONNECT_URI" --wait safebox-installer >/dev/null 2>&1 &
   fi
@@ -211,7 +211,7 @@ start_vm() {
   [[ "$mode" =~ ^(disposable|persistent|offline)$ ]] || die "Unbekannter Modus: $mode"
   need qemu-img; need virsh
   [[ -f "$SAFEBOX_BASE_IMAGE" ]] || die "Basis-Image fehlt. Zuerst create-base und seal-base ausführen."
-  [[ "$("${SUDO[@]}" stat -c '%a' "$SAFEBOX_BASE_IMAGE")" == "440" ]] || die "Basis-Image ist nicht versiegelt (Mode 0440). Zuerst ./safebox seal-base ausführen."
+  [[ "$("${SUDO[@]}" stat -c '%a' "$SAFEBOX_BASE_IMAGE")" == "440" ]] || die "Basis-Image ist nicht versiegelt (Mode 0440). Zuerst bash ./safebox seal-base ausführen."
   assert_no_running_safebox
   prepare_storage
 
@@ -260,7 +260,7 @@ start_vm() {
   if command -v virt-viewer >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     virt-viewer --connect "$SAFEBOX_CONNECT_URI" --wait "$domain" || true
   else
-    echo "[INFO] GUI öffnen mit: ./safebox viewer $domain"
+    echo "[INFO] GUI öffnen mit: bash ./safebox viewer $domain"
   fi
 
   if [[ "$disposable" -eq 1 ]]; then
@@ -315,7 +315,7 @@ case ${1:-help} in
   start) shift; start_vm "${1:-disposable}" ;;
   viewer) shift; viewer "${1:-safebox-persistent}" ;;
   status) status ;;
-  doctor) exec "$ROOT/tests/doctor.sh" ;;
+  doctor) exec bash "$ROOT/tests/doctor.sh" ;;
   cleanup-sessions) cleanup_sessions ;;
   help|-h|--help) usage ;;
   *) usage; exit 1 ;;

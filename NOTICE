@@ -1,13 +1,17 @@
 KVM-QEMU-SafeBox
-Copyright 2026 YOUR_NAME
+Copyright 2026 BlackRabbitZ
 
 Original repository / Ursprüngliches Repository:
-https://github.com/YOUR_GITHUB_USERNAME/kvm-qemu-safebox
+https://github.com/BlackRabbitZ/kvm-qemu-safebox
 
 This product includes software and documentation originally developed in the
-KVM-QEMU-SafeBox project at the repository above.
+KVM-QEMU-SafeBox project by BlackRabbitZ at the repository above.
 
-Bei weitergegebenen abgeleiteten Werken ist dieser Attribution-Hinweis gemäß
-den Bedingungen der Apache License 2.0 in lesbarer Form beizubehalten.
+When redistributing a modified or derivative version, retain the applicable
+license, copyright, attribution and NOTICE information required by the
+Apache License 2.0 and clearly mark files that you changed.
 
-IMPORTANT: Replace YOUR_NAME and YOUR_GITHUB_USERNAME before the first public release.
+Bei der Weitergabe einer veränderten oder abgeleiteten Version sind die nach
+der Apache License 2.0 erforderlichen Lizenz-, Copyright-, Attribution- und
+NOTICE-Hinweise beizubehalten. Geänderte Dateien sind entsprechend kenntlich
+zu machen.

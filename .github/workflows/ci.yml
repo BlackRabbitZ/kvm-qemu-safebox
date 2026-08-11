@@ -25,8 +25,8 @@ jobs:
       - name: XML prüfen
         run: xmllint --noout network/safebox-net.xml vm/templates/*.xml.in
       - name: VM-Sicherheitsrichtlinie statisch prüfen
-        run: ./tests/static-policy.sh
+        run: bash ./tests/static-policy.sh
       - name: Netzwerk-Policy prüfen
-        run: ./tests/network-policy.sh
+        run: bash ./tests/network-policy.sh
       - name: Templates rendern
-        run: ./tests/render-smoke.sh
+        run: bash ./tests/render-smoke.sh

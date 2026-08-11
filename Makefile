@@ -5,7 +5,7 @@ SHELL := /bin/bash
 check: syntax xml policy network-policy render shellcheck
 
 release-check: check
-	./tests/release-check.sh
+	bash ./tests/release-check.sh
 
 syntax:
 	bash -n safebox install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh
@@ -18,13 +18,13 @@ xml:
 	fi
 
 policy:
-	./tests/static-policy.sh
+	bash ./tests/static-policy.sh
 
 network-policy:
-	./tests/network-policy.sh
+	bash ./tests/network-policy.sh
 
 render:
-	./tests/render-smoke.sh
+	bash ./tests/render-smoke.sh
 
 shellcheck:
 	@if command -v shellcheck >/dev/null 2>&1; then \

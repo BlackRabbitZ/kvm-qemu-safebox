@@ -1,6 +1,6 @@
 [Unit]
 Description=KVM-QEMU-SafeBox host/LAN guard
-Documentation=https://github.com/YOUR_GITHUB_USERNAME/kvm-qemu-safebox
+Documentation=https://github.com/BlackRabbitZ/kvm-qemu-safebox
 After=nftables.service
 Before=libvirtd.service virtqemud.service virtnetworkd.service
 
