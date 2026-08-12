@@ -2,6 +2,13 @@
 
 Alle nennenswerten Änderungen an KVM-QEMU-SafeBox werden hier dokumentiert.
 
+## [0.2.1] - 2026-08-12
+
+### Fixed
+- GitHub Actions/ShellCheck: ungültige SC2016-Direktive in `guest/harden.sh` korrigiert.
+- Alle von ShellCheck gemeldeten SC2015-Konstrukte (`A && B || C`) durch eindeutige `if/else`-Blöcke ersetzt.
+- Statische Policy-Prüfungen über eine klare `check_grep`-Hilfsfunktion vereinheitlicht, ohne die Sicherheitslogik abzuschwächen.
+
 ## [0.2.0] - 2026-08-12
 
 ### Sicherheits-Härtung

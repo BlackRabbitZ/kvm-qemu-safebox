@@ -24,7 +24,8 @@ apt-get install -y --no-install-recommends \
 
 # Bewusst keine Host/Gast-Komfortagenten oder typischen Netzwerkserver.
 for pkg in qemu-guest-agent spice-vdagent openssh-server avahi-daemon cups-daemon; do
-  # shellcheck disable=SC2016 -- ${Status} wird absichtlich von dpkg-query ausgewertet.
+  # ${Status} wird absichtlich von dpkg-query ausgewertet, nicht von der Shell.
+  # shellcheck disable=SC2016
   if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed'; then
     apt-get purge -y "$pkg"
   fi
@@ -88,7 +89,7 @@ grep -Fq "$SAFEBOX_GUEST_IP/$SAFEBOX_PREFIX" < <(nmcli -g ipv4.addresses connect
 sysctl --system >/dev/null
 install -d -m 0755 /etc/safebox
 cat > /etc/safebox/hardened <<MARKER
-version=0.2.0
+version=0.2.1
 network=static
 ipv4=$SAFEBOX_GUEST_IP/$SAFEBOX_PREFIX
 gateway=$SAFEBOX_GATEWAY

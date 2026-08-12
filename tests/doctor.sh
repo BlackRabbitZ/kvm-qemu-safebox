@@ -11,10 +11,18 @@ warn(){ printf '\033[33m[WARN]\033[0m %s\n' "$*"; WARN=$((WARN+1)); }
 bad(){ printf '\033[31m[FAIL]\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 
 for cmd in qemu-system-x86_64 qemu-img virsh nft xmllint jq sha256sum aa-status pgrep; do
-  command -v "$cmd" >/dev/null 2>&1 && ok "$cmd vorhanden" || bad "$cmd fehlt"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    ok "$cmd vorhanden"
+  else
+    bad "$cmd fehlt"
+  fi
 done
 
-[[ -e /dev/kvm ]] && ok "/dev/kvm vorhanden" || bad "/dev/kvm fehlt – Hardwarevirtualisierung prüfen"
+if [[ -e /dev/kvm ]]; then
+  ok "/dev/kvm vorhanden"
+else
+  bad "/dev/kvm fehlt – Hardwarevirtualisierung prüfen"
+fi
 
 if command -v aa-status >/dev/null 2>&1 && aa-status --enabled >/dev/null 2>&1; then
   ok "AppArmor aktiviert"
@@ -30,12 +38,36 @@ fi
 
 if [[ -f "$SAFEBOX_QEMU_CONF" ]]; then
   conf="$("${SUDO[@]}" cat "$SAFEBOX_QEMU_CONF" 2>/dev/null || true)"
-  grep -Eq '^security_driver[[:space:]]*=[[:space:]]*"apparmor"[[:space:]]*$' <<<"$conf" && ok "qemu.conf erzwingt AppArmor" || bad "qemu.conf: security_driver=apparmor fehlt"
-  grep -Eq '^security_default_confined[[:space:]]*=[[:space:]]*1[[:space:]]*$' <<<"$conf" && ok "QEMU-Gäste standardmäßig confined" || bad "security_default_confined=1 fehlt"
-  grep -Eq '^security_require_confined[[:space:]]*=[[:space:]]*1[[:space:]]*$' <<<"$conf" && ok "Unconfined QEMU-Gäste werden abgelehnt" || bad "security_require_confined=1 fehlt"
-  grep -Eq '^seccomp_sandbox[[:space:]]*=[[:space:]]*1[[:space:]]*$' <<<"$conf" && ok "QEMU-seccomp hostweit aktiviert" || bad "seccomp_sandbox=1 fehlt"
-  grep -Eq '^max_core[[:space:]]*=[[:space:]]*0[[:space:]]*$' <<<"$conf" && ok "QEMU-Core-Dumps deaktiviert" || bad "max_core=0 fehlt"
-  grep -Eq '^dump_guest_core[[:space:]]*=[[:space:]]*0[[:space:]]*$' <<<"$conf" && ok "Gast-RAM in QEMU-Core-Dumps deaktiviert" || bad "dump_guest_core=0 fehlt"
+  if grep -Eq '^security_driver[[:space:]]*=[[:space:]]*"apparmor"[[:space:]]*$' <<<"$conf"; then
+    ok "qemu.conf erzwingt AppArmor"
+  else
+    bad "qemu.conf: security_driver=apparmor fehlt"
+  fi
+  if grep -Eq '^security_default_confined[[:space:]]*=[[:space:]]*1[[:space:]]*$' <<<"$conf"; then
+    ok "QEMU-Gäste standardmäßig confined"
+  else
+    bad "security_default_confined=1 fehlt"
+  fi
+  if grep -Eq '^security_require_confined[[:space:]]*=[[:space:]]*1[[:space:]]*$' <<<"$conf"; then
+    ok "Unconfined QEMU-Gäste werden abgelehnt"
+  else
+    bad "security_require_confined=1 fehlt"
+  fi
+  if grep -Eq '^seccomp_sandbox[[:space:]]*=[[:space:]]*1[[:space:]]*$' <<<"$conf"; then
+    ok "QEMU-seccomp hostweit aktiviert"
+  else
+    bad "seccomp_sandbox=1 fehlt"
+  fi
+  if grep -Eq '^max_core[[:space:]]*=[[:space:]]*0[[:space:]]*$' <<<"$conf"; then
+    ok "QEMU-Core-Dumps deaktiviert"
+  else
+    bad "max_core=0 fehlt"
+  fi
+  if grep -Eq '^dump_guest_core[[:space:]]*=[[:space:]]*0[[:space:]]*$' <<<"$conf"; then
+    ok "Gast-RAM in QEMU-Core-Dumps deaktiviert"
+  else
+    bad "dump_guest_core=0 fehlt"
+  fi
 else
   bad "$SAFEBOX_QEMU_CONF fehlt"
 fi
@@ -52,7 +84,11 @@ fi
 
 if command -v virsh >/dev/null 2>&1; then
   caps="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" capabilities 2>/dev/null || true)"
-  grep -q '<model>apparmor</model>' <<<"$caps" && ok "libvirt meldet AppArmor als Security Model" || bad "libvirt-AppArmor-Security-Model nicht bestätigt"
+  if grep -q '<model>apparmor</model>' <<<"$caps"; then
+    ok "libvirt meldet AppArmor als Security Model"
+  else
+    bad "libvirt-AppArmor-Security-Model nicht bestätigt"
+  fi
 
   clean="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" nwfilter-dumpxml clean-traffic 2>/dev/null || true)"
   if [[ -n "$clean" ]] && grep -q "filter='no-mac-spoofing'" <<<"$clean" && grep -q "filter='no-ip-spoofing'" <<<"$clean" && grep -q "filter='no-arp-spoofing'" <<<"$clean"; then
@@ -66,11 +102,31 @@ fi
 
 if "${SUDO[@]}" nft list table inet safebox_guard >/dev/null 2>&1; then
   live="$("${SUDO[@]}" nft list table inet safebox_guard)"
-  grep -Fq 'iifname "virbr-safebox" meta nfproto ipv6 drop' <<<"$live" && ok "Runtime-IPv6 Gast->Host blockiert" || bad "Runtime IPv6-DROP fehlt"
-  grep -Fq 'oifname "virbr-safebox" meta nfproto ipv6 drop' <<<"$live" && ok "Runtime-IPv6 Host->Gast blockiert" || bad "Runtime IPv6-DROP Richtung Gast fehlt"
-  grep -Fq 'iifname "virbr-safebox" drop' <<<"$live" && ok "Runtime-Gast->Host vollständig geblockt" || bad "Runtime Gast->Host-DROP fehlt"
-  grep -Fq 'iifname "virbr-safebox" ip saddr != 10.77.0.100 drop' <<<"$live" && ok "Runtime IPv4 Source-Spoofing hostseitig blockiert" || bad "Runtime IPv4 Source-Spoofing-Regel fehlt"
-  grep -Fq 'iifname "virbr-safebox-inst" drop' <<<"$live" && ok "Installer-Gast->Host standardmäßig geblockt" || bad "Installer Gast->Host-DROP fehlt"
+  if grep -Fq 'iifname "virbr-safebox" meta nfproto ipv6 drop' <<<"$live"; then
+    ok "Runtime-IPv6 Gast->Host blockiert"
+  else
+    bad "Runtime IPv6-DROP fehlt"
+  fi
+  if grep -Fq 'oifname "virbr-safebox" meta nfproto ipv6 drop' <<<"$live"; then
+    ok "Runtime-IPv6 Host->Gast blockiert"
+  else
+    bad "Runtime IPv6-DROP Richtung Gast fehlt"
+  fi
+  if grep -Fq 'iifname "virbr-safebox" drop' <<<"$live"; then
+    ok "Runtime-Gast->Host vollständig geblockt"
+  else
+    bad "Runtime Gast->Host-DROP fehlt"
+  fi
+  if grep -Fq 'iifname "virbr-safebox" ip saddr != 10.77.0.100 drop' <<<"$live"; then
+    ok "Runtime IPv4 Source-Spoofing hostseitig blockiert"
+  else
+    bad "Runtime IPv4 Source-Spoofing-Regel fehlt"
+  fi
+  if grep -Fq 'iifname "virbr-safebox-inst" drop' <<<"$live"; then
+    ok "Installer-Gast->Host standardmäßig geblockt"
+  else
+    bad "Installer Gast->Host-DROP fehlt"
+  fi
 else
   bad "safebox_guard ist nicht aktiv"
 fi
@@ -126,8 +182,16 @@ else
 fi
 
 if [[ -f "$SAFEBOX_BASE_IMAGE" ]]; then
-  [[ "$("${SUDO[@]}" stat -c '%a' "$SAFEBOX_BASE_IMAGE" 2>/dev/null)" == 440 ]] && ok "Basis-Image Mode 0440" || bad "Basis-Image ist nicht Mode 0440"
-  [[ "$("${SUDO[@]}" stat -c '%U' "$SAFEBOX_BASE_IMAGE" 2>/dev/null)" == root ]] && ok "Basis-Image gehört root" || bad "Basis-Image gehört nicht root"
+  if [[ "$("${SUDO[@]}" stat -c '%a' "$SAFEBOX_BASE_IMAGE" 2>/dev/null)" == 440 ]]; then
+    ok "Basis-Image Mode 0440"
+  else
+    bad "Basis-Image ist nicht Mode 0440"
+  fi
+  if [[ "$("${SUDO[@]}" stat -c '%U' "$SAFEBOX_BASE_IMAGE" 2>/dev/null)" == root ]]; then
+    ok "Basis-Image gehört root"
+  else
+    bad "Basis-Image gehört nicht root"
+  fi
   if [[ -f "$SAFEBOX_BASE_HASH" ]] && "${SUDO[@]}" sha256sum -c "$SAFEBOX_BASE_HASH" >/dev/null 2>&1; then
     ok "SHA-256-Siegel des Basis-Images gültig"
   else

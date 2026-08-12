@@ -40,8 +40,23 @@ trap 'rm -f "$xml"' EXIT
 
 x(){ xmllint --xpath "$1" "$xml" 2>/dev/null; }
 count(){ x "count($1)"; }
-assert_count(){ local path=$1 expected=$2 msg=$3 got; got="$(count "$path")"; [[ "$got" == "$expected" ]] && ok "$msg" || bad "$msg (gefunden: $got, erwartet: $expected)"; }
-assert_xpath(){ local expr=$1 msg=$2; [[ "$(x "boolean($expr)")" == "true" ]] && ok "$msg" || bad "$msg"; }
+assert_count(){
+  local path=$1 expected=$2 msg=$3 got
+  got="$(count "$path")"
+  if [[ "$got" == "$expected" ]]; then
+    ok "$msg"
+  else
+    bad "$msg (gefunden: $got, erwartet: $expected)"
+  fi
+}
+assert_xpath(){
+  local expr=$1 msg=$2
+  if [[ "$(x "boolean($expr)")" == "true" ]]; then
+    ok "$msg"
+  else
+    bad "$msg"
+  fi
+}
 
 # Angriffsfläche: keine Host-Integrations-/Passthrough-Geräte.
 for node in hostdev filesystem channel redirdev smartcard shmem sound audio rng tpm vsock watchdog serial parallel console panic iommu crypto memory lease hub; do
@@ -73,7 +88,11 @@ assert_xpath "/domain/devices/disk[@device='disk']/driver[@type='qcow2']" "Syste
 assert_xpath "/domain/devices/disk[@device='disk']/target[@bus='virtio']" "Systemdisk verwendet VirtIO"
 if [[ -n "$EXPECTED_DISK" ]]; then
   actual_disk="$(x 'string(/domain/devices/disk[@device="disk"]/source/@file)')"
-  [[ "$actual_disk" == "$EXPECTED_DISK" ]] && ok "Live-Domain verwendet erwartetes Overlay" || bad "Unerwartete Live-Disk: $actual_disk"
+  if [[ "$actual_disk" == "$EXPECTED_DISK" ]]; then
+    ok "Live-Domain verwendet erwartetes Overlay"
+  else
+    bad "Unerwartete Live-Disk: $actual_disk"
+  fi
 fi
 
 if [[ "$MODE" == "auto" ]]; then
@@ -138,7 +157,11 @@ if [[ "$pid" =~ ^[0-9]+$ ]] && "${SUDO[@]}" test -r "/proc/$pid/status"; then
   fi
 
   seccomp="$(awk '/^Seccomp:/{print $2}' <<<"$status")"
-  [[ "$seccomp" == "2" ]] && ok "QEMU läuft mit Seccomp-Filtermodus 2" || bad "QEMU Seccomp ist nicht Filtermodus 2 (Wert: ${seccomp:-unbekannt})"
+  if [[ "$seccomp" == "2" ]]; then
+    ok "QEMU läuft mit Seccomp-Filtermodus 2"
+  else
+    bad "QEMU Seccomp ist nicht Filtermodus 2 (Wert: ${seccomp:-unbekannt})"
+  fi
 
   aa="$("${SUDO[@]}" cat "/proc/$pid/attr/current" 2>/dev/null || true)"
   if [[ -n "$aa" && "$aa" != unconfined* && "$aa" == *libvirt* ]]; then
