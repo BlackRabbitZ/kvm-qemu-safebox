@@ -27,6 +27,9 @@
     <feature policy='disable' name='svm'/>
   </cpu>
   <clock offset='utc'/>
+
+  <!-- AppArmor confinement wird zusätzlich hostweit in qemu.conf erzwungen. -->
+  <seclabel type='dynamic' model='apparmor' relabel='yes'/>
   <on_poweroff>destroy</on_poweroff>
   <on_reboot>restart</on_reboot>
   <on_crash>destroy</on_crash>
@@ -39,7 +42,7 @@
     <emulator>/usr/bin/qemu-system-x86_64</emulator>
 
     <disk type='file' device='disk'>
-      <driver name='qemu' type='qcow2' cache='none' io='native' discard='unmap'/>
+      <driver name='qemu' type='qcow2' cache='none' io='native' discard='ignore'/>
       <source file='__DISK_IMAGE__'/>
       <target dev='vda' bus='virtio'/>
     </disk>
@@ -57,10 +60,13 @@
 
     <interface type='network'>
       <mac address='52:54:00:77:00:10'/>
-      <source network='safebox-net'/>
+      <source network='safebox-install-net'/>
       <model type='virtio'/>
       <rom bar='off'/>
       <port isolated='yes'/>
+      <filterref filter='clean-traffic'>
+        <parameter name='CTRL_IP_LEARNING' value='dhcp'/>
+      </filterref>
     </interface>
 
     <!-- Installer: PS/2 garantiert Eingabe ohne USB-Passthrough/-Controller. -->

@@ -1,30 +1,81 @@
 # Netzwerkmodell
 
-SafeBox verwendet **kein Bridged Networking**. Das virtuelle Netz `safebox-net` nutzt libvirt-NAT über `virbr-safebox`.
+SafeBox trennt **Installation** und **Runtime** bewusst in zwei libvirt-Netze.
 
-## Erlaubt
+## Runtime: `safebox-net`
 
-- DHCP zum libvirt-dnsmasq auf dem Host
-- DNS zum libvirt-dnsmasq auf dem Host
-- ausgehender Zugriff auf öffentliche Internetziele
-- Antworten auf vom Gast initiierte Internetverbindungen
+```text
+Netz       safebox-net
+Bridge     virbr-safebox
+Subnetz    10.77.0.0/24
+Gateway    10.77.0.1
+Gast       10.77.0.100/24 (statisch)
+MAC        52:54:00:77:00:10
+DHCP       aus
+Host-DNS   aus
+IPv6       hostseitig vollständig geblockt
+```
 
-## Blockiert
+`network/safebox-net.xml` enthält absichtlich **kein `<dhcp>`** und setzt `<dns enable='no'/>`. Damit soll libvirt für das Runtime-Netz keinen DNS-/DHCP-Dienst bereitstellen. Nach dem Start prüft SafeBox zusätzlich, dass kein unerwarteter `dnsmasq`-Prozess für `safebox-net` läuft.
 
-- sonstiger Gast→Host-Verkehr
-- RFC1918: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
-- Loopback-/Link-Local-/CGNAT- und weitere Spezialbereiche
-- IPv6 ULA/Link-Local/Multicast in der Guard-Tabelle
-- Kommunikation zwischen SafeBox-Gästen durch libvirt-Port-Isolation
+### Runtime Host-Policy
 
-## Warum DNS/DHCP zum Host erlaubt sind
+Erlaubt ist nur:
 
-Bei einem libvirt-NAT-Netz stellt der Host für den virtuellen Link DHCP und DNS bereit. Diese beiden Dienste werden deshalb gezielt freigegeben; andere Host-Ports werden verworfen.
+- ausgehender IPv4-Zugriff auf nicht blockierte öffentliche Ziele
+- Rückverkehr für vom Gast initiierte Verbindungen
 
-## Bekannte Grenze
+Hostseitig blockiert werden:
 
-Eine Domain kann einen öffentlich gerouteten Dienst erreichen, der wiederum Zugriff auf dein internes Netz hat. Netzisolation ersetzt deshalb keine Sicherheitsprüfung externer Dienste. VPNs auf dem Host können außerdem öffentliche oder private Routen verändern; die RFC1918-Sperren bleiben zwar bestehen, aber benutzerdefinierte Unternehmensnetze sollten zusätzlich in `blocked_v4`/`blocked_v6` eingetragen werden.
+- **sämtlicher Gast→Host-Verkehr auf `virbr-safebox`**
+- neue Host→Gast-Verbindungen
+- neue weitergeleitete Eingangsverbindungen
+- RFC1918
+- Loopback, Link-Local, CGNAT und weitere Spezialbereiche
+- unerwartete IPv4-Quelladressen
+- **sämtlicher IPv6-Verkehr in beide Richtungen**
 
-## Persistenz auf dem Host
+IPv6 wird absichtlich auf dem Host verworfen. Eine Root-Shell im Gast kann daher nicht durch Reaktivieren von IPv6 die Netzgrenze umgehen.
 
-`setup-network` installiert `safebox-firewall.service`. Die Guard-Tabelle wird damit bei jedem Host-Start erneut geladen und ist in der systemd-Reihenfolge vor `libvirtd.service`/`virtqemud.service` eingeordnet. So soll ein automatisch startendes libvirt-Netz nicht ohne die zusätzliche SafeBox-Guard-Regel aktiv werden.
+## Installation: `safebox-install-net`
+
+```text
+Netz       safebox-install-net
+Bridge     virbr-safebox-inst
+Subnetz    10.77.0.0/24
+Gateway    10.77.0.1
+Gast       feste DHCP-Lease 10.77.0.100
+DHCP/DNS   nur für Bootstrap/Installation
+```
+
+Dieses Netz wird nur von `create-base` für die vertrauenswürdige Debian-Erstinstallation verwendet. Der nftables-Guard erlaubt hier nur DHCP/DNS zum Host; sonstiger Gast→Host-Verkehr bleibt gesperrt. `seal-base` zerstört und undefiniert das Installationsnetz wieder.
+
+Untrusted/riskante Workloads dürfen niemals im Installationsnetz betrieben werden.
+
+## Anti-Spoofing
+
+Beide Online-Domains verwenden `clean-traffic`, der auf libvirts `clean-traffic` aufbaut.
+
+- **Installer:** `CTRL_IP_LEARNING=dhcp`, damit die feste Bootstrap-Lease sicher gelernt werden kann.
+- **Runtime:** `IP=10.77.0.100`, weil der gehärtete Gast statisch konfiguriert ist.
+
+Der nftables-Guard erzwingt zusätzlich unabhängig vom nwfilter `10.77.0.100` als einzige erlaubte geroutete IPv4-Quelladresse.
+
+## Kein Netzwerk-Autostart
+
+Beide SafeBox-Netze haben keinen Autostart. Vor jeder Netzwerkaktivierung wird zuerst der nftables-Guard geladen/verifiziert und der nwfilter geprüft. Ein vorhandenes libvirt-Netz muss exakt der erwarteten Policy entsprechen; Abweichungen führen zum Abbruch.
+
+## Öffentliche DNS-Resolver
+
+`guest/harden.sh` setzt standardmäßig:
+
+```text
+9.9.9.9
+149.112.112.112
+```
+
+Die Werte lassen sich beim Härtungslauf über `SAFEBOX_DNS_PRIMARY` und `SAFEBOX_DNS_SECONDARY` überschreiben. Private/LAN-DNS-Ziele funktionieren absichtlich nicht, weil der Host-Guard private Adressbereiche blockiert.
+
+## Grenzen
+
+Ein öffentliches Internetziel kann serverseitig selbst Zugriff auf andere Netze besitzen. SafeBox kann die Infrastruktur eines entfernten Dienstes nicht beurteilen. Online-Modus verhindert auch keine Exfiltration zu öffentlichen Zielen. Für vollständig netzlose Arbeit `start offline` verwenden.

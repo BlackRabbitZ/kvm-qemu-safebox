@@ -1,10 +1,8 @@
 #!/usr/sbin/nft -f
 
-# Defense-in-depth für die dedizierte SafeBox-Bridge.
-# Libvirt stellt NAT/DHCP/DNS bereit. Diese Tabelle verhindert zusätzlich:
-#   * Zugriff der VM auf den Host (außer DHCP und DNS)
-#   * Zugriff der VM auf RFC1918/LAN-, Link-Local- und weitere Spezialnetze
-# Internet-Ziele bleiben erlaubt.
+# Hostseitige, fail-closed Netzwerkgrenze für SafeBox.
+# Der Runtime-Gast gilt als vollständig kompromittierbar. Deshalb besitzt die
+# Runtime-Bridge absichtlich KEINEN erlaubten Gast->Host-Dienst.
 
 table inet safebox_guard {
     set blocked_v4 {
@@ -28,41 +26,62 @@ table inet safebox_guard {
         }
     }
 
-    set blocked_v6 {
-        type ipv6_addr
-        flags interval
-        elements = {
-            ::/128,
-            ::1/128,
-            fc00::/7,
-            fe80::/10,
-            ff00::/8,
-            2001:db8::/32
-        }
-    }
-
     chain input {
         type filter hook input priority -50; policy accept;
 
-        # DHCP und DNS des libvirt-dnsmasq auf dem Host sind die einzigen
-        # absichtlich erreichbaren Host-Dienste für die SafeBox.
-        iifname "virbr-safebox" udp sport 68 dport 67 accept
-        iifname "virbr-safebox" ip saddr 10.77.0.100 udp dport 53 accept
-        iifname "virbr-safebox" ip saddr 10.77.0.100 tcp dport 53 accept
-
-        # Alles andere VM -> Host blockieren.
+        # Runtime: weder IPv4- noch IPv6-Dienste des Hosts sind erreichbar.
+        iifname "virbr-safebox" meta nfproto ipv6 drop
         iifname "virbr-safebox" drop
+
+        # Installer-Netz: IPv6 ebenfalls vollständig aus. Nur DHCP/DNS sind
+        # während der vertrauenswürdigen OS-Erstinstallation erreichbar.
+        iifname "virbr-safebox-inst" meta nfproto ipv6 drop
+        iifname "virbr-safebox-inst" ip saddr { 0.0.0.0, 10.77.0.100 } udp sport 68 dport 67 accept
+        iifname "virbr-safebox-inst" ip saddr 10.77.0.100 ip daddr 10.77.0.1 udp dport 53 accept
+        iifname "virbr-safebox-inst" ip saddr 10.77.0.100 ip daddr 10.77.0.1 tcp dport 53 accept
+        iifname "virbr-safebox-inst" drop
+    }
+
+    chain output {
+        type filter hook output priority -50; policy accept;
+
+        # IPv6 in Richtung beider SafeBox-Bridges vollständig sperren.
+        oifname "virbr-safebox" meta nfproto ipv6 drop
+        oifname "virbr-safebox-inst" meta nfproto ipv6 drop
+
+        # Runtime: ausschließlich Antworten auf bereits vom Gast initiierte
+        # Host-Verbindungen; da input alles droppt, existiert normal keine.
+        oifname "virbr-safebox" ct state established,related accept
+        oifname "virbr-safebox" drop
+
+        # Installer: DHCP-Antworten und Antworten auf DHCP/DNS zulassen.
+        oifname "virbr-safebox-inst" udp sport 67 dport 68 accept
+        oifname "virbr-safebox-inst" ct state established,related accept
+        oifname "virbr-safebox-inst" drop
     }
 
     chain forward {
         type filter hook forward priority -50; policy accept;
 
-        # Keine frei gewählte Quell-IP aus dem Gast routen. Die VM erhält
-        # absichtlich genau 10.77.0.100 per statischer DHCP-Zuordnung.
-        iifname "virbr-safebox" ip saddr != 10.77.0.100 drop
+        # IPv6 in BEIDEN Richtungen vollständig blockieren.
+        iifname "virbr-safebox" meta nfproto ipv6 drop
+        oifname "virbr-safebox" meta nfproto ipv6 drop
+        iifname "virbr-safebox-inst" meta nfproto ipv6 drop
+        oifname "virbr-safebox-inst" meta nfproto ipv6 drop
 
-        # SafeBox darf nicht in private/LAN/Spezialnetze routen.
+        # Beide Modi dürfen ausschließlich die fest vorgesehene IPv4 nutzen.
+        iifname "virbr-safebox" ip saddr != 10.77.0.100 drop
+        iifname "virbr-safebox-inst" ip saddr != 10.77.0.100 drop
+
+        # Kein Routing zu LAN-, Loopback-, Link-Local-, CGNAT- oder anderen
+        # nicht-öffentlichen/speziellen IPv4-Zielen.
         iifname "virbr-safebox" ip daddr @blocked_v4 drop
-        iifname "virbr-safebox" ip6 daddr @blocked_v6 drop
+        iifname "virbr-safebox-inst" ip daddr @blocked_v4 drop
+
+        # Zum Gast ausschließlich Antworten auf bereits etablierte Sessions.
+        oifname "virbr-safebox" ct state established,related accept
+        oifname "virbr-safebox" drop
+        oifname "virbr-safebox-inst" ct state established,related accept
+        oifname "virbr-safebox-inst" drop
     }
 }

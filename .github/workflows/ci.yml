@@ -17,16 +17,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Prüfpakete installieren
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck libxml2-utils
-      - name: Bash-Syntax
-        run: bash -n safebox install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh
-      - name: ShellCheck
-        run: shellcheck safebox install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh
-      - name: XML prüfen
-        run: xmllint --noout network/safebox-net.xml vm/templates/*.xml.in
-      - name: VM-Sicherheitsrichtlinie statisch prüfen
-        run: bash ./tests/static-policy.sh
-      - name: Netzwerk-Policy prüfen
-        run: bash ./tests/network-policy.sh
-      - name: Templates rendern
-        run: bash ./tests/render-smoke.sh
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck libxml2-utils libvirt-clients
+      - name: Vollständiger Release-Check
+        run: make release-check

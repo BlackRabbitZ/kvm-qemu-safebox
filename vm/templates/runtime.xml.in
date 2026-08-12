@@ -25,6 +25,9 @@
     <feature policy='disable' name='svm'/>
   </cpu>
   <clock offset='utc'/>
+
+  <!-- AppArmor confinement wird zusätzlich hostweit in qemu.conf erzwungen. -->
+  <seclabel type='dynamic' model='apparmor' relabel='yes'/>
   <on_poweroff>destroy</on_poweroff>
   <on_reboot>restart</on_reboot>
   <on_crash>destroy</on_crash>
@@ -37,7 +40,7 @@
     <emulator>/usr/bin/qemu-system-x86_64</emulator>
 
     <disk type='file' device='disk'>
-      <driver name='qemu' type='qcow2' cache='none' io='native' discard='unmap'/>
+      <driver name='qemu' type='qcow2' cache='none' io='native' discard='ignore'/>
       <source file='__DISK_IMAGE__'/>
       <target dev='vda' bus='virtio'/>
     </disk>

@@ -2,13 +2,9 @@
   <name>safebox-net</name>
   <forward mode='nat'/>
   <bridge name='virbr-safebox' stp='off' delay='0' macTableManager='libvirt'/>
-  <!-- Alle Ports auf dieser Bridge werden gegeneinander isoliert. -->
   <port isolated='yes'/>
-  <domain name='safebox.invalid' localOnly='yes'/>
-  <dns enable='yes' forwardPlainNames='no'/>
-  <ip address='10.77.0.1' netmask='255.255.255.0'>
-    <dhcp>
-      <host mac='52:54:00:77:00:10' name='safebox' ip='10.77.0.100'/>
-    </dhcp>
-  </ip>
+
+  <!-- Runtime: absichtlich KEIN DHCP und KEIN DNS auf dem Host. -->
+  <dns enable='no'/>
+  <ip address='10.77.0.1' netmask='255.255.255.0'/>
 </network>

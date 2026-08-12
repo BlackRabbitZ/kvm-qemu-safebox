@@ -7,7 +7,7 @@ PH_NAME='YOUR_''NAME'
 usage() {
   cat <<'USAGE'
 Verwendung:
-  ./tools/configure-project.sh GITHUB_USERNAME "DEIN NAME"
+  ./tools/configure-project.sh GITHUB_USERNAME "ANZEIGENAME"
 
 Beispiel:
   ./tools/configure-project.sh maxmustermann "Max Mustermann"

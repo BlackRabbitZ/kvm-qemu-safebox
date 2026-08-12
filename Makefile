@@ -8,13 +8,13 @@ release-check: check
 	bash ./tests/release-check.sh
 
 syntax:
-	bash -n safebox install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh
+	bash -n safebox host/*.sh install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh
 
 xml:
 	@if command -v xmllint >/dev/null 2>&1; then \
-		xmllint --noout network/safebox-net.xml vm/templates/*.xml.in; \
+		xmllint --noout network/safebox-net.xml network/safebox-install-net.xml vm/templates/*.xml.in; \
 	else \
-		python3 -c 'import glob,xml.etree.ElementTree as E; [E.parse(f) for f in ["network/safebox-net.xml",*glob.glob("vm/templates/*.xml.in")]]'; \
+		python3 -c 'import glob,xml.etree.ElementTree as E; [E.parse(f) for f in ["network/safebox-net.xml","network/safebox-install-net.xml",*glob.glob("vm/templates/*.xml.in")]]'; \
 	fi
 
 policy:
@@ -28,7 +28,7 @@ render:
 
 shellcheck:
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck safebox install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh; \
+		shellcheck safebox host/*.sh install/*.sh network/*.sh guest/*.sh tests/*.sh tools/*.sh; \
 	else \
 		echo "[WARN] shellcheck nicht installiert – in GitHub Actions wird es ausgeführt."; \
 	fi

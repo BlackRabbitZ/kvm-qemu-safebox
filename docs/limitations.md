@@ -1,10 +1,14 @@
 # Grenzen und bekannte Einschränkungen
 
-- **Keine 100-%-Garantie gegen VM-Escapes.** Das Projekt reduziert Angriffsfläche, beseitigt aber keine unbekannten Hypervisor-Lücken.
-- **IPv4-only in v0.1.** IPv6 wird im gehärteten Gast deaktiviert.
-- **Kein Host↔Gast-Clipboard.** Copy/Paste innerhalb des Debian-Gasts funktioniert normal.
-- **Keine Drag-&-Drop-Dateien vom Host.** Dateien müssen aus dem Internet geladen oder auf kontrolliertem Weg anderweitig übertragen werden.
-- **Kein USB-Passthrough.** USB-Sticks, Webcams, FIDO-Keys etc. stehen der VM nicht direkt zur Verfügung.
-- **Kein Audio in v0.1.** Ein Audio-Gerät ist absichtlich nicht definiert.
-- **Host-Skript apt-basiert.** Debian als Host ist der primär getestete Zielpfad.
-- **Disposable schützt nicht vor Datenabfluss während der Sitzung.** Was die VM über das Internet senden kann, kann sie während der laufenden Session exfiltrieren.
+- **Keine 100-%-Garantie gegen VM-Escapes.** SafeBox reduziert Angriffsfläche, kann unbekannte Fehler in KVM/QEMU/libvirt/Kernel/Hardware aber nicht ausschließen.
+- **Debian-/AppArmor-Zielprofil.** v0.2.0 erzwingt AppArmor und ist damit nicht ohne Anpassung für SELinux-Hosts gedacht.
+- **Systemweite libvirt-Härtung.** Die verwalteten `qemu.conf`-Optionen wirken auf alle QEMU-Domains der Systeminstanz.
+- **IPv4-only.** IPv6 wird im Gast deaktiviert und zusätzlich hostseitig vollständig verworfen.
+- **Kein Host↔Gast-Clipboard oder Drag & Drop.**
+- **Kein USB-/PCI-Passthrough.**
+- **Kein Audio / 3D.**
+- **Disposable ist kein Secure Erase.** Das Overlay wird logisch gelöscht; physische Rückstände auf SSD/CoW/Snapshots/Backups sind damit nicht garantiert beseitigt.
+- **Kein Schutz vor Exfiltration ins öffentliche Internet.** Eine Online-VM darf öffentliche Ziele erreichen.
+- **Externe Dienste können intern weiterleiten.** Ein öffentliches Ziel kann selbst Zugriff auf andere Netze haben.
+- **CPU-/Mikroarchitektur bleibt eine Grenze.** Cache-/Transient-Execution-/SMT-Seitenkanäle und unbekannte CPU-/Mikrocodefehler können durch eine VM-Konfiguration nicht vollständig ausgeschlossen werden. Für besonders sensible Hosts sind aktueller Mikrocode und ggf. deaktiviertes SMT zusätzliche Betriebsmaßnahmen.
+- **Host muss aktuell und vertrauenswürdig sein.** SafeBox kann einen bereits kompromittierten Host nicht retten.

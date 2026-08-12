@@ -11,6 +11,9 @@ network_block=$(cat <<'XML'
       <model type='virtio'/>
       <rom bar='off'/>
       <port isolated='yes'/>
+      <filterref filter='clean-traffic'>
+        <parameter name='IP' value='10.77.0.100'/>
+      </filterref>
     </interface>
 XML
 )
@@ -33,19 +36,30 @@ render "$ROOT/vm/templates/runtime.xml.in" "$TMP/runtime.xml" safebox-test /var/
 render "$ROOT/vm/templates/runtime.xml.in" "$TMP/offline.xml" safebox-offline-test /var/lib/libvirt/images/safebox/offline.qcow2 "" ""
 
 if command -v xmllint >/dev/null 2>&1; then
-  xmllint --noout "$TMP"/*.xml
+  xmllint --noout "$TMP"/*.xml "$ROOT/network/safebox-net.xml" "$ROOT/network/safebox-install-net.xml"
 else
-  python3 - "$TMP" <<'PY'
+  python3 - "$TMP" "$ROOT/network" <<'PY'
 import sys
 from pathlib import Path
 import xml.etree.ElementTree as ET
-for f in Path(sys.argv[1]).glob('*.xml'):
+for f in list(Path(sys.argv[1]).glob('*.xml')) + [Path(sys.argv[2])/'safebox-net.xml', Path(sys.argv[2])/'safebox-install-net.xml']:
     ET.parse(f)
 PY
 fi
 
+if command -v virt-xml-validate >/dev/null 2>&1; then
+  virt-xml-validate "$TMP/installer.xml" domain
+  virt-xml-validate "$TMP/runtime.xml" domain
+  virt-xml-validate "$TMP/offline.xml" domain
+  virt-xml-validate "$ROOT/network/safebox-net.xml" network
+  virt-xml-validate "$ROOT/network/safebox-install-net.xml" network
+fi
+
 ! grep -R '__[A-Z_]*__' "$TMP" >/dev/null || { echo "[FAIL] Nicht ersetzter Template-Platzhalter" >&2; exit 1; }
 ! grep -q "<interface" "$TMP/offline.xml" || { echo "[FAIL] Offline-Profil enthält Netzwerkinterface" >&2; exit 1; }
-grep -q "<interface" "$TMP/runtime.xml" || { echo "[FAIL] Online-Profil enthält kein Netzwerkinterface" >&2; exit 1; }
+grep -q "<source network='safebox-net'" "$TMP/runtime.xml" || { echo "[FAIL] Runtime-Profil nutzt nicht safebox-net" >&2; exit 1; }
+grep -q "parameter name='IP' value='10.77.0.100'" "$TMP/runtime.xml" || { echo "[FAIL] Runtime-Profil erzwingt nicht die feste Gast-IP" >&2; exit 1; }
+grep -q "<source network='safebox-install-net'" "$TMP/installer.xml" || { echo "[FAIL] Installer nutzt nicht safebox-install-net" >&2; exit 1; }
+grep -q "CTRL_IP_LEARNING' value='dhcp'" "$TMP/installer.xml" || { echo "[FAIL] Installer-nwfilter nutzt kein DHCP-Snooping" >&2; exit 1; }
 
-echo "[PASS] XML-Templates rendern für Installer, Online und Offline."
+echo "[PASS] XML-Templates rendern und validieren für Installer, Runtime und Offline."

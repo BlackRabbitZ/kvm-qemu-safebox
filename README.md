@@ -3,209 +3,172 @@
 > [!NOTE]
 > **Idee & Umsetzung:** Die ursprüngliche Idee für dieses Projekt stammt von **Esmaralda Haze**. Sie ist nicht meine eigene Idee – ich, **BlackRabbitZ**, habe sie technisch umgesetzt und als dieses Repository realisiert.
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](#)
 [![Guest](https://img.shields.io/badge/Guest-Debian%2013%20%2B%20XFCE-A81D33?logo=debian&logoColor=white)](https://www.debian.org/releases/trixie/)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-KVM%20%2F%20QEMU-6C5CE7)](https://www.qemu.org/)
-[![libvirt](https://img.shields.io/badge/libvirt-isolated%20NAT-2F8F9D)](https://libvirt.org/)
-[![Security](https://img.shields.io/badge/security-defense--in--depth-success)](SECURITY.md)
+[![Security](https://img.shields.io/badge/security-fail--closed-success)](SECURITY.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![CI](https://github.com/BlackRabbitZ/kvm-qemu-safebox/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackRabbitZ/kvm-qemu-safebox/actions/workflows/ci.yml)
 
-**KVM-QEMU-SafeBox** baut eine bewusst minimal integrierte Desktop-VM mit **Debian 13 (Trixie) + XFCE**. Die VM hat Internetzugang, soll aber standardmäßig **keinen normalen Zugriff auf Host, LAN, Host-Dateien, USB-/PCI-Geräte, Zwischenablage oder Host/Gast-Dateitransfer** besitzen.
+**KVM-QEMU-SafeBox** ist eine bewusst minimal integrierte Desktop-VM für potenziell riskante Workloads. Das Sicherheitsmodell nimmt an, dass der Gast vollständig kompromittiert sein kann und ein Angreifer dort **Root** besitzt.
 
 > [!IMPORTANT]
-> SafeBox ist Defense in Depth, keine mathematische Sicherheitsgarantie. Unbekannte Schwachstellen in Kernel/KVM, QEMU, libvirt, Firmware oder Hardware können theoretisch eine VM-Isolation überwinden.
+> SafeBox reduziert die Angriffsfläche und erzwingt mehrere unabhängige Sicherheitsgrenzen. Sie kann unbekannte Schwachstellen in Linux/KVM, QEMU, libvirt, CPU/Mikrocode oder Hardware nicht mathematisch ausschließen.
 
-## Was ist deaktiviert?
+## Sicherheitsmodell in v0.2.0
 
-| Host/Gast-Funktion | Status |
-|---|:---:|
-| Host-Verzeichnisse | ❌ AUS |
-| virtiofs / 9p | ❌ AUS |
-| USB-Passthrough | ❌ AUS |
-| PCI-Passthrough | ❌ AUS |
-| USB-Controller im Gast | ❌ AUS |
-| Shared Memory / KSM-Merging | ❌ AUS |
-| Shared Clipboard | ❌ AUS |
-| Drag & Drop | ❌ AUS |
-| SPICE File Transfer | ❌ AUS |
-| QEMU Guest Agent | ❌ AUS |
-| zusätzliche Host-Sockets/Channels | ❌ AUS |
-| Host-SSH aus der VM | ❌ BLOCKIERT |
-| Bridged Networking | ❌ AUS |
-| SPICE OpenGL/3D | ❌ AUS |
-| Memory Balloon | ❌ AUS |
-| Nested Virtualization (VMX/SVM) | ❌ AUS |
-| virtuelle PMU | ❌ AUS |
-| VMware vmport | ❌ AUS |
+```text
+                          INTERNET
+                             │
+                        libvirt NAT
+                             │
+                    ┌────────▼────────┐
+                    │ nftables Guard  │
+                    │ Host/LAN DROP   │
+                    │ IPv6 DROP ALL   │
+                    └────────┬────────┘
+                             │
+                    libvirt nwfilter
+                  MAC/IP/ARP Anti-Spoof
+                             │
+                     virbr-safebox
+                             │
+                 ┌───────────▼──────────┐
+                 │ Debian 13 XFCE       │
+                 │ Gast = untrusted     │
+                 │ statisch 10.77.0.100 │
+                 └──────────────────────┘
 
-### Trotzdem normal bedienbar
+Runtime-Bridge:
+  • KEIN DHCP-Dienst auf dem Host
+  • KEIN DNS-Dienst auf dem Host
+  • Gast -> Host vollständig DROP
+  • IPv6 in beide Richtungen DROP
+  • RFC1918/Sonderziele DROP
+  • nur Antworten auf vom Gast initiierte Internet-Verbindungen zurück
+
+QEMU auf dem Host:
+  • non-root
+  • AppArmor verpflichtend
+  • seccomp verpflichtend
+  • eigener Mount-Namespace
+  • dedizierte Cgroup
+  • Runtime-Attestation nach jedem Start
+```
+
+Für die **vertrauenswürdige Debian-Erstinstallation** existiert separat `safebox-install-net` / `virbr-safebox-inst`. Nur dort werden temporär DHCP und DNS bereitgestellt. `seal-base` entfernt dieses Installationsnetz wieder vollständig. Der normale Runtime-Gast wird nie daran angeschlossen.
+
+## Was explizit deaktiviert ist
 
 | Funktion | Status |
 |---|:---:|
-| Virtuelle Tastatur | ✅ AN |
-| Virtuelle Maus / Tablet | ✅ AN |
-| XFCE Desktop | ✅ AN |
-| Browser / Terminal | ✅ AN |
-| Copy & Paste **innerhalb** der VM | ✅ AN |
-| Internet über isoliertes NAT | ✅ AN |
-| Disposable-Sitzungen | ✅ AN |
-| Persistente Arbeits-VM | ✅ AN |
-| Offline-Sitzungen | ✅ AN |
+| Host-Verzeichnisse / virtiofs / 9p | ❌ AUS |
+| USB-/PCI-Passthrough | ❌ AUS |
+| USB-Controller | ❌ AUS |
+| Shared Clipboard | ❌ AUS |
+| Drag & Drop / SPICE File Transfer | ❌ AUS |
+| QEMU Guest Agent / zusätzliche Channels | ❌ AUS |
+| Bridged Networking zum LAN | ❌ AUS |
+| SPICE OpenGL / 3D | ❌ AUS |
+| Audio | ❌ AUS |
+| Memory Balloon | ❌ AUS |
+| KSM / Page Sharing | ❌ AUS |
+| Nested Virtualization VMX/SVM | ❌ AUS |
+| virtuelle PMU / VMware vmport | ❌ AUS |
+| IPv6 aus/zur SafeBox | ❌ HOSTSEITIG GEBLOCKT |
+| Runtime-DHCP auf dem Host | ❌ AUS |
+| Runtime-DNS auf dem Host | ❌ AUS |
+| SafeBox-Netzwerk-Autostart | ❌ AUS |
 
-Maus und Tastatur werden **nicht als echte USB-Geräte durchgereicht**. QEMU stellt dem Gast virtuelle Eingabegeräte bereit.
+## Fail-closed statt Warnungen
 
----
+Eine SafeBox startet nur, wenn die erwarteten Schutzschichten vorhanden sind. Nach dem Start überprüft `tools/runtime-verify.sh` die **tatsächlich laufende** Domain und den QEMU-Prozess. Unter anderem werden geprüft:
 
-## Architektur
+- Live-Domain-XML statt nur Repository-Templates
+- keine Host-Integration/Passthrough-Geräte
+- SPICE `listen=none`, Clipboard/Filetransfer/GL aus
+- Runtime genau eine NIC, Offline keine NIC
+- Installer und Runtime verwenden unterschiedliche libvirt-Netze
+- Installer: Anti-Spoofing-`nwfilter` mit DHCP-Snooping
+- Runtime: Anti-Spoofing-`nwfilter` mit fest gepinnter IPv4
+- Runtime-Netz: kein DHCP und kein libvirt-DNS
+- kein unerwarteter Runtime-`dnsmasq`-Prozess
+- QEMU läuft ohne UID 0
+- Linux `Seccomp: 2`
+- QEMU läuft in einem libvirt-AppArmor-Profil
+- separater Mount-Namespace
+- dedizierte libvirt/systemd-Cgroup
 
-```text
-                           INTERNET
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │ Linux Host       │
-                    │ libvirt + KVM    │
-                    │ QEMU + AppArmor  │
-                    └────────┬─────────┘
-                             │
-                     NAT + nftables
-                             │
-           ┌─────────────────┴─────────────────┐
-           │ virbr-safebox / 10.77.0.0/24     │
-           │                                   │
-           │ VM → Host      DROP               │
-           │ VM → RFC1918   DROP               │
-           │ VM → LAN       DROP               │
-           │ VM → DHCP/DNS  ALLOW              │
-           │ VM → Internet  ALLOW              │
-           └─────────────────┬─────────────────┘
-                             │
-                     virtio-net / NAT
-                             │
-                    ┌────────▼────────┐
-                    │ Debian 13 XFCE  │
-                    │ SafeBox Guest   │
-                    └─────────────────┘
-```
-
-Libvirt-NAT allein ist hier nicht die komplette Sicherheitsgrenze. `network/safebox-guard.nft` ergänzt eine eigene Host-Regelmenge, die von `virbr-safebox` nur DHCP/DNS zum Host erlaubt, DNS auf die fest zugewiesene Gast-IP beschränkt, geroutete Pakete mit unerwarteter IPv4-Quelladresse verwirft und Zugriffe auf private/Spezial-Zielnetze blockiert.
-
-Zusätzlich setzt das libvirt-Netz `port isolated='yes'`, sodass SafeBox-Gäste auf derselben Linux-Bridge voneinander isoliert werden.
+Fehlschlag bedeutet: **VM wird automatisch beendet.**
 
 ---
 
 # Installation
 
-## 1. Voraussetzungen
+## 1. Host vorbereiten
 
-Empfohlen:
-
-- Linux-Host mit Intel VT-x oder AMD-V
-- Debian 12/13 als Host für den derzeit getesteten Installationspfad
-- aktiviertes KVM (`/dev/kvm`)
-- ca. 60 GB freier Speicher
-- 8 GB Host-RAM oder mehr empfohlen
-- Debian-13-amd64-Netinst-ISO
-
-Debian 13 „Trixie“ ist die Zielversion des Gasts.
-
-## 2. Repository klonen
+Primäres Zielsystem ist ein aktueller **Debian-13-Host** mit Intel VT-x oder AMD-V und `/dev/kvm`.
 
 ```bash
 git clone https://github.com/BlackRabbitZ/kvm-qemu-safebox.git
 cd kvm-qemu-safebox
-```
-
-Die Original-Attribution ist bereits fest auf **BlackRabbitZ** und dieses Repository gesetzt. Für eine normale Installation musst du daran nichts ändern.
-
-> **Hinweis zu Windows/GitHub Desktop:** Windows-Dateisysteme übernehmen das Unix-Executable-Bit beim ersten Commit nicht immer. SafeBox ruft Repository-Skripte deshalb bewusst über `bash` auf. Die CI und die dokumentierten Befehle funktionieren damit auch dann, wenn eine `.sh`-Datei im Git-Index als `100644` statt `100755` gespeichert wurde.
-
-Optional kannst du die Release-/Attributionsprüfung ausführen:
-
-```bash
-make release-check
-```
-
-## 3. Host-Abhängigkeiten installieren
-
-```bash
 sudo bash ./install/install-host.sh
 ```
 
-Danach einmal ab- und wieder anmelden, falls dein Benutzer neu zu `libvirt`/`kvm` hinzugefügt wurde.
+Der Installer:
 
-Prüfen:
+- installiert KVM/QEMU/libvirt sowie Network-/nwfilter-Komponenten
+- aktiviert AppArmor
+- erzwingt in `/etc/libvirt/qemu.conf`:
+
+```ini
+security_driver = "apparmor"
+security_default_confined = 1
+security_require_confined = 1
+seccomp_sandbox = 1
+max_core = 0
+dump_guest_core = 0
+```
+
+- deaktiviert QEMU-Core-Dumps
+- installiert den persistenten `safebox-firewall.service`
+- fügt den normalen Desktop-Benutzer **nicht** automatisch zu `libvirt` oder `kvm` hinzu
+
+> [!WARNING]
+> Die Einstellungen in `qemu.conf` gelten für die **systemweite libvirt-QEMU-Instanz**. SafeBox ist für einen bewusst gehärteten Host gedacht. Vorhandene andere VMs müssen mit verpflichtendem Confinement kompatibel sein.
+
+Danach:
 
 ```bash
 bash ./safebox doctor
 ```
 
-## 4. Debian-ISO herunterladen
+## 2. Basis-VM installieren
 
-Nutze das offizielle Debian-13-Netinst-Image von Debian.org und prüfe idealerweise die veröffentlichten Checksummen/Signaturen.
-
-Beispielpfad:
-
-```text
-~/Downloads/debian-13.6.0-amd64-netinst.iso
-```
-
-## 5. SafeBox-Netzwerk einrichten
+Eine offizielle Debian-13-Netinst-ISO verwenden und deren Prüfsumme/Signatur separat über Debian verifizieren.
 
 ```bash
-bash ./safebox setup-network
+bash ./safebox create-base ~/Downloads/debian-13.x.x-amd64-netinst.iso
 ```
 
-Das erstellt:
+`create-base` richtet automatisch das getrennte **Installationsnetz** ein. Falls zuvor das sichere Runtime-Netz aktiv war, wird es nach erfolgreicher Policy-Prüfung für die Installation gestoppt.
 
-```text
-Netz:      safebox-net
-Bridge:    virbr-safebox
-Subnetz:   10.77.0.0/24
-Gateway:   10.77.0.1
-VM-IP:     10.77.0.100
-```
-
-und installiert zusätzlich `safebox-firewall.service`. Dadurch wird `inet/safebox_guard` **vor libvirt** geladen und bleibt auch nach Host-Neustarts aktiv.
-
-Prüfen:
-
-```bash
-sudo nft list table inet safebox_guard
-virsh -c qemu:///system net-dumpxml safebox-net
-```
-
-## 6. Basis-VM erstellen
-
-```bash
-bash ./safebox create-base ~/Downloads/debian-13.6.0-amd64-netinst.iso
-```
-
-Falls sich das Fenster nicht automatisch öffnet:
+Falls kein Fenster erscheint:
 
 ```bash
 bash ./safebox viewer safebox-installer
 ```
 
-### Debian-Installation
-
 Im Debian-Installer:
 
-1. **Graphical install** wählen.
-2. Sprache/Region/Tastatur auswählen.
-3. Einen normalen Benutzer anlegen.
-4. Partitionierung innerhalb der virtuellen Disk durchführen.
-5. Bei der Softwareauswahl **XFCE** auswählen.
-6. Einen SSH-Server **nicht** auswählen.
-7. Installation abschließen und in das frisch installierte Debian neu starten; noch nicht endgültig herunterfahren.
+- XFCE auswählen
+- **keinen SSH-Server** installieren
+- nur die vertrauenswürdige Basisinstallation/Härtung durchführen
+- das Installationsnetz nicht für spätere riskante Workloads verwenden
 
-> [!TIP]
-> Der Installer nutzt virtuelle PS/2-Eingabe, damit Tastatur und Maus bereits im Installer ohne USB funktionieren. Das Runtime-Profil verwendet anschließend virtuelle VirtIO-Eingabe.
+## 3. Gast härten und auf statisches Runtime-Netz umstellen
 
-## 7. Gast **vor dem Versiegeln** härten
-
-Nach der Debian-Installation in das frisch installierte System booten. Klone dieses Repository **innerhalb der VM über das Internet** und führe im Debian-Gast aus:
+Vor dem Versiegeln im frisch installierten Debian-Gast:
 
 ```bash
 sudo apt update
@@ -213,36 +176,64 @@ sudo apt install -y git
 git clone https://github.com/BlackRabbitZ/kvm-qemu-safebox.git
 cd kvm-qemu-safebox
 sudo bash ./guest/harden.sh
-sudo reboot
+sudo poweroff
 ```
 
-Nach dem Neustart kurz prüfen, dass XFCE, Maus/Tastatur und Internet funktionieren. Danach den Gast vollständig herunterfahren.
+Das Skript:
 
-## 8. Basis versiegeln
+- installiert/aktiviert AppArmor, nftables und unattended-upgrades
+- entfernt bzw. maskiert Guest Agent, SPICE-Agent, SSH-Server, Avahi und CUPS
+- setzt konservative Kernel-/Netzwerk-Sysctls
+- konfiguriert das SafeBox-NIC-Profil für den nächsten Boot statisch auf `10.77.0.100/24`
+- setzt Gateway `10.77.0.1`
+- deaktiviert IPv6 zusätzlich im NetworkManager-Profil
+- setzt standardmäßig `9.9.9.9` und `149.112.112.112` als öffentliche DNS-Resolver
 
-Auf dem **Host**:
+> [!IMPORTANT]
+> Nach `guest/harden.sh` die Installer-VM **vollständig herunterfahren** und anschließend versiegeln. Die statische Konfiguration wird beim ersten Runtime-Boot aktiv. Für die Host-Sicherheit wird der Gastkonfiguration trotzdem nicht vertraut; dieselbe IP/IPv6-Policy wird hostseitig erzwungen.
+
+## 4. Basis versiegeln
+
+Auf dem Host:
 
 ```bash
 bash ./safebox seal-base
 ```
 
-Das führt `qemu-img check` aus, entfernt die kopierte Installer-ISO und setzt das Basisimage auf `root:<QEMU-Gruppe>` mit `0440` (schreibgeschützt). Alle späteren persistenten oder temporären Sitzungen verwenden QCOW2-Overlays und schreiben nicht in die Basis.
+Dabei werden:
 
-Die versiegelte Basis gehört **root**, nicht dem QEMU-Prozess. QEMU erhält nur Leserechte über seine Gruppe. Dadurch kann der QEMU-Prozess die Basis nicht einfach per `chmod` wieder beschreibbar machen.
+1. die Installer-Domain entfernt,
+2. `safebox-install-net` gestoppt und undefiniert,
+3. `qemu-img check` ausgeführt,
+4. die Installer-ISO entfernt,
+5. das Basisimage auf `root:<QEMU-Gruppe>` / `0440` gesetzt,
+6. eine SHA-256-Prüfdatei erzeugt.
 
+Vor jedem späteren Start wird das Base-Image erneut gegen diesen Hash geprüft.
 
-Das Gastskript:
+## 5. Runtime-Netz optional vorab prüfen
 
-- aktiviert AppArmor
-- aktiviert eine eingehend restriktive nftables-Firewall
-- aktiviert unattended-upgrades
-- setzt konservative Kernel-/Netzwerk-Sysctls
-- entfernt `qemu-guest-agent` und `spice-vdagent`, falls vorhanden
-- deaktiviert SSH/Avahi/CUPS, falls als Dienste vorhanden
-- deaktiviert IPv6 für das IPv4-only-Netzprofil von v0.1
+Nicht zwingend erforderlich – jeder Online-Start richtet es selbst fail-closed ein:
 
-> [!IMPORTANT]
-> `bash ./safebox start ...` verweigert den Start, solange das Basisimage nicht auf `0440` versiegelt ist. Damit wird verhindert, dass die vermeintlich unveränderliche Basis versehentlich als Arbeitsdisk benutzt wird.
+```bash
+bash ./safebox setup-network
+```
+
+Erwartete Runtime-Werte:
+
+```text
+Netz:      safebox-net
+Bridge:    virbr-safebox
+Subnetz:   10.77.0.0/24
+Gateway:   10.77.0.1
+Gast-IP:   10.77.0.100 (statisch im Gast + hostseitig gepinnt)
+MAC:       52:54:00:77:00:10
+DHCP:      AUS
+Host-DNS:  AUS
+IPv6:      HOSTSEITIG DROP ALL
+```
+
+Ein bereits vorhandenes libvirt-Netz wird mit `net-dumpxml` geprüft. Abweichungen führen zum Startabbruch. Das Netzwerk wird absichtlich **nicht autogestartet**.
 
 ---
 
@@ -254,15 +245,7 @@ Das Gastskript:
 bash ./safebox start disposable
 ```
 
-```text
-debian13-xfce-base.qcow2   [read-only]
-            │
-            └── safebox-disposable-....qcow2
-                         │
-                         └── nach sauberem VM-Ende gelöscht
-```
-
-Änderungen landen nur im temporären Overlay.
+Temporäres QCOW2-Overlay, das nach Ende der transienten Domain logisch gelöscht wird.
 
 ## Persistent
 
@@ -270,13 +253,13 @@ debian13-xfce-base.qcow2   [read-only]
 bash ./safebox start persistent
 ```
 
-Das Overlay:
+Dauerhaftes Overlay unter:
 
 ```text
 /var/lib/libvirt/images/safebox/persistent.qcow2
 ```
 
-bleibt erhalten. Das Basisimage wird trotzdem nicht verändert.
+Das Backing-Image wird vor dem Start geprüft und muss exakt das versiegelte SafeBox-Basisimage sein.
 
 ## Offline
 
@@ -284,103 +267,50 @@ bleibt erhalten. Das Basisimage wird trotzdem nicht verändert.
 bash ./safebox start offline
 ```
 
-Hier wird **gar keine virtuelle Netzwerkkarte** in die Domain eingefügt.
+Das Domain-XML enthält **keine virtuelle Netzwerkkarte**.
 
-## Status
+## Laufende VM nochmals prüfen
 
 ```bash
-bash ./safebox status
+bash ./safebox verify-runtime
 ```
 
-## Sicherheitscheck
+oder:
 
-Auf dem Host:
+```bash
+bash ./safebox verify-runtime safebox-persistent
+```
+
+## Gesamtdiagnose / Repository-Prüfung
 
 ```bash
 bash ./safebox doctor
-make check
+make release-check
 ```
 
-Innerhalb einer gestarteten Online-SafeBox kann zusätzlich geprüft werden, ob Internet funktioniert, private Ziele blockiert sind und TCP/22 des Host-Gateways nicht erreichbar ist:
-
-```bash
-bash ./tests/guest-network-test.sh
-```
-
-## Verwaiste Disposable-Overlays bereinigen
-
-Falls ein Startskript hart beendet wurde:
+## Verwaiste Disposable-Overlays entfernen
 
 ```bash
 bash ./safebox cleanup-sessions
 ```
 
-Noch aktive/definierte Domains werden dabei übersprungen.
-
 ---
 
-# Sicherheitsdetails
+# Wichtige Grenzen
 
-## SPICE
+SafeBox bietet **keine Garantie gegen unbekannte VM-Escapes**. Sie schützt außerdem nicht gegen einen bereits kompromittierten Host, kompromittierten Host-Administrator, bösartige Firmware oder unbekannte Hardware-/CPU-Schwachstellen. Der Host sollte aktuell, minimal und vertrauenswürdig gehalten werden.
 
-SPICE bleibt ausschließlich als lokaler Grafikpfad für die Bedienung erhalten. Im Domain-XML sind explizit gesetzt:
+Online-Sitzungen dürfen weiterhin mit nicht blockierten öffentlichen Internetzielen kommunizieren. Ein kompromittierter Gast kann deshalb Daten ins Internet exfiltrieren. SafeBox ist Netzwerk-/Host-Isolation, **kein Anonymisierungsnetzwerk**.
 
-```xml
-<graphics type='spice' autoport='yes'>
-  <listen type='none'/>
-  <clipboard copypaste='no'/>
-  <filetransfer enable='no'/>
-  <gl enable='no'/>
-</graphics>
-```
+**Disposable bedeutet nicht „forensisch sicher gelöscht“.** `rm` entfernt das Overlay logisch aus dem Dateisystem; auf SSDs, CoW-Dateisystemen, Snapshots oder Backups kann physische Rekonstruktion nicht pauschal ausgeschlossen werden. Für sensible Systeme sollte der Host-Speicher vollständig verschlüsselt sein.
 
-Es gibt **keinen** `spicevmc`-Channel und keinen `spice-vdagent` im gehärteten Gast.
+Mehr dazu:
 
-## Memory-Merging / KSM
-
-Beide Domain-Profile enthalten:
-
-```xml
-<memoryBacking>
-  <nosharepages/>
-</memoryBacking>
-```
-
-Dadurch weist libvirt den Hypervisor an, Shared-Page-Merging/KSM für die SafeBox-Domain zu deaktivieren.
-
-## USB
-
-Der USB-Bus wird explizit deaktiviert:
-
-```xml
-<controller type='usb' model='none'/>
-```
-
-Dadurch bleibt virtuelle Tastatur-/Mauseingabe möglich, ohne echte USB-Geräte zuzuweisen.
-
-## CPU-/Machine-Minimierung
-
-Die Domain deaktiviert Nested Virtualization (`vmx`/`svm`), die virtuelle PMU und `vmport` explizit. Diese Funktionen werden für einen normalen XFCE-Desktop nicht benötigt und sollen dem Gast daher gar nicht erst angeboten werden.
-
-## QEMU seccomp
-
-Aktuelle libvirt/QEMU-Stacks können QEMU mit seccomp-Sandboxing starten. SafeBox prüft mit `bash ./safebox doctor`, ob die lokale QEMU-Version `-sandbox` unterstützt. SafeBox fügt **keine rohe QEMU-Commandline** in das Domain-XML ein, sondern überlässt die Prozess-Sandbox dem libvirt-Sicherheitsstack des Hosts.
-
-## AppArmor
-
-Auf Debian wird AppArmor installiert/aktiviert. Libvirt kann den QEMU-Prozess über seinen Security Driver zusätzlich einschränken. Der genaue aktive Security Driver hängt vom Host-Build und der Host-Konfiguration ab.
-
----
-
-# Was SafeBox nicht kann
-
-- keine Garantie gegen unbekannte KVM/QEMU-Escapes
-- kein Schutz, wenn der Host bereits kompromittiert ist
-- kein Schutz vor Datenabfluss **ins Internet** während einer Online-Sitzung
-- keine Anonymisierung deiner Internetverbindung
-- kein Ersatz für Updates, Backups und separates Geheimnismanagement
-
-Mehr dazu: [`docs/threat-model.md`](docs/threat-model.md) und [`docs/limitations.md`](docs/limitations.md).
+- [`docs/threat-model.md`](docs/threat-model.md)
+- [`docs/hardening.md`](docs/hardening.md)
+- [`docs/networking.md`](docs/networking.md)
+- [`docs/runtime-attestation.md`](docs/runtime-attestation.md)
+- [`docs/limitations.md`](docs/limitations.md)
 
 ---
 
@@ -389,81 +319,31 @@ Mehr dazu: [`docs/threat-model.md`](docs/threat-model.md) und [`docs/limitations
 ```text
 kvm-qemu-safebox/
 ├── safebox
-├── README.md
-├── LICENSE
-├── NOTICE
-├── ATTRIBUTION.md
-├── SECURITY.md
-├── CONTRIBUTING.md
-├── CHANGELOG.md
-├── Makefile
-├── VERSION
-├── .github/
-│   ├── workflows/ci.yml
-│   └── dependabot.yml
-├── config/
-│   └── defaults.conf
-├── docs/
-│   ├── architecture.md
-│   ├── hardening.md
-│   ├── limitations.md
-│   ├── networking.md
-│   └── threat-model.md
+├── host/
+│   └── harden-libvirt.sh
+├── install/
+│   └── install-host.sh
+├── network/
+│   ├── safebox-net.xml
+│   ├── safebox-install-net.xml
+│   ├── safebox-guard.nft
+│   ├── apply-firewall.sh
+│   └── safebox-firewall.service
+├── vm/templates/
+│   ├── installer.xml.in
+│   └── runtime.xml.in
 ├── guest/
 │   ├── harden.sh
 │   ├── nftables.conf
 │   └── 99-safebox-hardening.conf
-├── install/
-│   └── install-host.sh
 ├── tools/
+│   ├── runtime-verify.sh
 │   └── verify-attribution.sh
-├── network/
-│   ├── safebox-net.xml
-│   ├── safebox-guard.nft
-│   ├── safebox-firewall.service
-│   ├── install-firewall-service.sh
-│   ├── apply-firewall.sh
-│   └── remove-firewall.sh
 ├── tests/
-│   ├── doctor.sh
-│   ├── guest-network-test.sh
-│   ├── network-policy.sh
-│   ├── release-check.sh
-│   ├── render-smoke.sh
-│   └── static-policy.sh
-└── vm/templates/
-    ├── installer.xml.in
-    └── runtime.xml.in
+├── docs/
+└── .github/workflows/ci.yml
 ```
 
----
+# Lizenz / Attribution
 
-# Quellen / technische Referenzen
-
-- Debian 13 / Trixie: https://www.debian.org/releases/trixie/
-- Debian Installer: https://www.debian.org/releases/trixie/debian-installer/
-- libvirt Domain XML: https://libvirt.org/formatdomain.html
-- libvirt Network XML: https://libvirt.org/formatnetwork.html
-- libvirt Firewalling: https://libvirt.org/firewall.html
-- QEMU System Invocation / seccomp: https://www.qemu.org/docs/master/system/qemu-manpage.html
-
----
-
-# Lizenz und Original-Attribution
-
-Dieses Projekt steht unter der **Apache License 2.0**.
-
-**Originalautor / Copyright:** BlackRabbitZ  
-**Original-Repository:** https://github.com/BlackRabbitZ/kvm-qemu-safebox
-
-Zusätzlich enthält das Repository eine [`NOTICE`](NOTICE)-Datei mit der dauerhaften Original-Attribution. Bei der Weitergabe einer veränderten oder abgeleiteten Version müssen die Bedingungen der Apache License 2.0 eingehalten werden. Dazu gehören insbesondere die dort vorgesehenen Lizenz- und Copyright-Hinweise, die Kennzeichnung geänderter Dateien sowie die Übernahme der einschlägigen Attribution-Hinweise aus `NOTICE` in lesbarer Form.
-
-Der Hinweis auf **BlackRabbitZ** und das Original-Repository ist im Projekt fest hinterlegt und soll bei weitergegebenen abgeleiteten Versionen erhalten bleiben.
-
-Prüfen kannst du das jederzeit mit:
-
-```bash
-make release-check
-```
-
-Siehe auch [`ATTRIBUTION.md`](ATTRIBUTION.md) und [`NOTICE`](NOTICE).
+Apache License 2.0. Siehe [`LICENSE`](LICENSE), [`NOTICE`](NOTICE) und [`ATTRIBUTION.md`](ATTRIBUTION.md).
