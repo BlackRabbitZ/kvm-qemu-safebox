@@ -1,8 +1,5 @@
 # 🛡️ KVM-QEMU-SafeBox
 
-> [!NOTE]
-> **Idee & Umsetzung:** Die ursprüngliche Idee für dieses Projekt stammt von **Esmaralda Haze**. Sie ist nicht meine eigene Idee – ich, **BlackRabbitZ**, habe sie technisch umgesetzt und als dieses Repository realisiert.
-
 [![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](#)
 [![Guest](https://img.shields.io/badge/Guest-Debian%2013%20%2B%20XFCE-A81D33?logo=debian&logoColor=white)](https://www.debian.org/releases/trixie/)
 [![Hypervisor](https://img.shields.io/badge/Hypervisor-KVM%20%2F%20QEMU-6C5CE7)](https://www.qemu.org/)
