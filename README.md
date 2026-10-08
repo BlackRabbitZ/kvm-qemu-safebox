@@ -21,9 +21,6 @@
 > [!CAUTION]
 > **Release Candidate – keine Freigabe für unbekannte, aktive Malware.** Die automatisierten Repository-Tests ersetzen keinen Nachweis auf einem echten KVM-Host. RC5 bringt dafür einen Live-Test und ein verpflichtendes Security Gate mit; die Ergebnisse müssen **auf deinem Zielrechner** geprüft werden. Ein bestandener Test garantiert weder Schutz vor unbekannten VM-Escapes noch vor kompromittierter Host-Firmware. Verwende für hochriskante Proben einen **dedizierten und physisch vom Netzwerk getrennten Rechner**.
 
-> [!IMPORTANT]
-> **Diese README dokumentiert v0.5.1-rc5, nicht den älteren GitHub-Stand v0.2.1.** Lade den vollständigen RC5-Projektstand hoch, bevor du die neuen Befehle verwendest. Die offline arbeitende Malware-VM besitzt **keinen virtuellen Netzwerkadapter**. Die frühere vernetzte Runtime sowie persistente Analyse-Sitzungen sind in RC5 deaktiviert. Nur die **vertrauenswürdige Erstinstallation von Debian** verwendet vorübergehend ein separates Installationsnetz.
-
 ## 📑 Inhaltsverzeichnis
 
 - [Über das Projekt](#-über-das-projekt)
