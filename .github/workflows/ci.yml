@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck libxml2-utils libvirt-clients
+      - name: Bash syntax
+        run: bash -n safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh
+      - name: ShellCheck
+        run: shellcheck safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh
+      - name: Policy tests
+        run: make release-check

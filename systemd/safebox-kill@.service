@@ -1,0 +1,17 @@
+[Unit]
+Description=KVM-QEMU-SafeBox fail-closed kill for %I
+
+[Service]
+Type=oneshot
+Environment=SAFEBOX_CONFIG_FILE=/etc/safebox/defaults.conf
+ExecStart=/usr/local/libexec/safebox/kill-domain.sh %I
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes

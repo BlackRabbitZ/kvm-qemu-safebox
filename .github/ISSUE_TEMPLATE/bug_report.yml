@@ -1,0 +1,41 @@
+name: Bug report
+description: Reproduzierbaren Funktionsfehler melden
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Für sicherheitskritische Funde wie VM-Escape, Host-Privilege-Escalation oder Firewall-/Watchdog-Bypass bitte zuerst SECURITY.md lesen und möglichst Private Vulnerability Reporting verwenden.
+  - type: input
+    id: version
+    attributes:
+      label: SafeBox-Version
+      placeholder: 0.5.0
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host-System
+      placeholder: Debian 13, Kernel ..., QEMU ..., libvirt ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduktionsschritte
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartetes Verhalten
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Tatsächliches Verhalten / Logs
+    validations:
+      required: true

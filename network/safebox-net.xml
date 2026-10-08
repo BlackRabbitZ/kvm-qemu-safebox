@@ -1,0 +1,8 @@
+<network>
+  <name>safebox-net</name>
+  <forward mode='nat'/>
+  <bridge name='virbr-safebox' stp='off' delay='0'/>
+  <port isolated='yes'/>
+  <dns enable='no'/>
+  <ip address='10.77.0.1' netmask='255.255.255.0'/>
+</network>

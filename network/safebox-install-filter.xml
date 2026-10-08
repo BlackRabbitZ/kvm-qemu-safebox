@@ -1,0 +1,13 @@
+<filter name='safebox-install-filter' chain='root'>
+  <!-- Installer permits DHCP/bootstrap but forbids MAC spoofing and non IPv4/ARP L2 traffic. -->
+  <rule action='drop' direction='out' priority='100'>
+    <mac match='no' srcmacaddr='$MAC'/>
+  </rule>
+  <rule action='accept' direction='inout' priority='800'>
+    <ip/>
+  </rule>
+  <rule action='accept' direction='inout' priority='850'>
+    <arp/>
+  </rule>
+  <rule action='drop' direction='inout' priority='1000'/>
+</filter>

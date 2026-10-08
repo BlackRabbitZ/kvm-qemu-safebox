@@ -1,0 +1,22 @@
+<filter name='safebox-runtime-filter' chain='root'>
+  <!-- Project-owned anti-spoofing filter. Host nftables remains the primary L3/L4 boundary. -->
+  <rule action='drop' direction='out' priority='100'>
+    <mac match='no' srcmacaddr='$MAC'/>
+  </rule>
+  <rule action='drop' direction='out' priority='200'>
+    <ip match='no' srcipaddr='$IP'/>
+  </rule>
+  <rule action='drop' direction='out' priority='300'>
+    <arp match='no' arpsrcmacaddr='$MAC'/>
+  </rule>
+  <rule action='drop' direction='out' priority='400'>
+    <arp match='no' arpsrcipaddr='$IP'/>
+  </rule>
+  <rule action='accept' direction='inout' priority='800'>
+    <ip/>
+  </rule>
+  <rule action='accept' direction='inout' priority='850'>
+    <arp/>
+  </rule>
+  <rule action='drop' direction='inout' priority='1000'/>
+</filter>

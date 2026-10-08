@@ -1,0 +1,24 @@
+name: Feature request
+description: Verbesserung vorschlagen
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Welches Problem soll gelöst werden?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Vorschlag
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Auswirkungen auf die Sicherheitsgrenzen
+      description: Erkläre insbesondere neue Host-Gast-Schnittstellen, Geräte, Netzwerkpfade oder Privilegien.
+    validations:
+      required: true

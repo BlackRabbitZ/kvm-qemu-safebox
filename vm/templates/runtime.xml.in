@@ -1,0 +1,26 @@
+<domain type='kvm'>
+  <name>__DOMAIN_NAME__</name>
+  <memory unit='MiB' dumpCore='off'>__RAM_MIB__</memory><currentMemory unit='MiB'>__RAM_MIB__</currentMemory>
+  <memtune><hard_limit unit='MiB'>__MEM_HARD_MIB__</hard_limit><swap_hard_limit unit='MiB'>__MEM_HARD_MIB__</swap_hard_limit></memtune>
+  <memoryBacking><source type='anonymous'/><access mode='private'/><nosharepages/></memoryBacking>
+  <vcpu placement='static'>__VCPUS__</vcpu><iothreads>__IOTHREADS__</iothreads>
+  <cputune><global_period>__CPU_PERIOD_US__</global_period><global_quota>__CPU_GLOBAL_QUOTA_US__</global_quota></cputune>
+  <os><type arch='x86_64' machine='q35'>hvm</type><boot dev='hd'/></os>
+  <features><acpi/><apic/><hyperv mode='custom'><vapic state='off'/></hyperv><pmu state='off'/><vmport state='off'/></features>
+  <cpu mode='host-model' check='partial'><feature policy='disable' name='vmx'/><feature policy='disable' name='svm'/></cpu>
+  <clock offset='utc'><timer name='hpet' present='no'/></clock>
+  <seclabel type='dynamic' model='apparmor' relabel='yes'/>
+  <on_poweroff>destroy</on_poweroff><on_reboot>restart</on_reboot><on_crash>destroy</on_crash>
+  <pm><suspend-to-mem enabled='no'/><suspend-to-disk enabled='no'/></pm>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'><driver name='qemu' type='qcow2' cache='none' io='native' discard='ignore'/><source file='__DISK_IMAGE__'/><target dev='sda' bus='sata'/><iotune><total_bytes_sec>__DISK_TOTAL_BYTES_SEC__</total_bytes_sec><total_iops_sec>__DISK_TOTAL_IOPS_SEC__</total_iops_sec></iotune></disk>
+__SAMPLE_BLOCK__
+    <controller type='pci' index='0' model='pcie-root'/><controller type='sata' index='0'/><controller type='usb' model='none'/>
+__NETWORK_BLOCK__
+    <input type='keyboard' bus='ps2'/><input type='mouse' bus='ps2'/>
+    <graphics type='spice' autoport='yes'><listen type='none'/><clipboard copypaste='no'/><filetransfer enable='no'/><gl enable='no'/></graphics>
+    <video><model type='bochs' heads='1' primary='yes'/></video>
+    <memballoon model='none'/>
+  </devices>
+</domain>

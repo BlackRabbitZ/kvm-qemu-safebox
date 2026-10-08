@@ -1,0 +1,705 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+export LC_ALL=C
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=config/defaults.conf
+source "$ROOT/config/defaults.conf"
+SUDO=(); [[ ${EUID} -eq 0 ]] || SUDO=(sudo)
+export SAFEBOX_NET_BACKEND
+
+die(){ echo "FEHLER: $*" >&2; exit 1; }
+need(){ command -v "$1" >/dev/null 2>&1 || die "Programm fehlt: $1"; }
+
+apply_profile(){
+  local profile=${1:-hardened} file
+  case "$profile" in hardened|balanced|performance) ;; *) die "Unbekanntes Profil: $profile";; esac
+  file="$ROOT/profiles/$profile.conf"
+  [[ -r "$file" && ! -L "$file" ]] || die "Profil fehlt oder ist unsicher: $file"
+  # shellcheck source=/dev/null
+  source "$file"
+  SAFEBOX_PROFILE="$profile"
+  export SAFEBOX_PROFILE SAFEBOX_RAM_MIB SAFEBOX_VCPUS SAFEBOX_MEM_HARD_MIB SAFEBOX_IOTHREADS SAFEBOX_CPU_PERIOD_US SAFEBOX_CPU_MAX_PERCENT SAFEBOX_DISK_TOTAL_BYTES_SEC SAFEBOX_DISK_TOTAL_IOPS_SEC SAFEBOX_MIN_FREE_GIB SAFEBOX_RUNTIME_MIN_FREE_GIB SAFEBOX_OVERLAY_MAX_GIB
+}
+profile_from_identity(){
+  local d=$1 path value
+  path="$(identity_path "$d")"
+  if "${SUDO[@]}" test -r "$path"; then
+    value="$("${SUDO[@]}" cat "$path" | jq -r '.profile // "hardened"' 2>/dev/null || true)"
+    case "$value" in hardened|balanced|performance) printf '%s\n' "$value"; return;; esac
+  fi
+  printf '%s\n' hardened
+}
+load_domain_profile(){ apply_profile "$(profile_from_identity "$1")"; }
+profiles_cmd(){
+  printf 'Verfügbare SafeBox-Profile:\n'
+  printf '  %-12s %s\n' hardened '6 GiB / 4 vCPU / konservative Limits (Standard)'
+  printf '  %-12s %s\n' balanced '8 GiB / 4 vCPU / höhere I/O-Grenzen'
+  printf '  %-12s %s\n' performance '12 GiB / 8 vCPU / maximale freigegebene Ressourcen'
+  printf '\nAlle Profile behalten dieselben Isolations- und Geräteverbote bei.\n'
+}
+
+usage(){ cat <<EOF2
+KVM-QEMU-SafeBox $SAFEBOX_VERSION
+  bash ./install/install-host.sh
+  bash ./safebox verify-debian-iso ISO SHA256SUMS SHA256SUMS.sign
+  bash ./safebox create-base ISO SHA256SUMS SHA256SUMS.sign
+  bash ./safebox seal-base
+  bash ./safebox start offline [hardened|balanced|performance]
+  bash ./safebox start malware /pfad/zur/verdaechtigen-datei [hardened|balanced|performance]
+  # WICHTIG: Malware ist ausnahmslos offline, temporär und ohne gemeinsamen Ordner.
+  bash ./safebox profiles
+  bash ./safebox viewer [DOMAIN]
+  bash ./safebox verify-runtime [DOMAIN]
+  bash ./safebox security-check
+  sudo bash ./safebox hardware-test  # echter benign KVM-Test, keine Probe
+  sudo bash ./safebox gate-check     # 12h-/Boot-gebundene Abnahme
+  bash ./safebox doctor
+  bash ./safebox status [DOMAIN]
+  bash ./safebox cleanup
+EOF2
+}
+
+qemu_user(){
+  local u
+  for u in libvirt-qemu qemu; do
+    if id -u "$u" >/dev/null 2>&1; then echo "$u"; return; fi
+  done
+  die 'Kein QEMU-Dienstbenutzer'
+}
+qemu_group(){ id -gn "$(qemu_user)"; }
+prepare_storage(){ "${SUDO[@]}" install -d -m 0750 -o root -g "$(qemu_group)" "$SAFEBOX_STORAGE" "$SAFEBOX_SESSIONS_DIR"; }
+set_qemu_owner(){ "${SUDO[@]}" chown "$(qemu_user):$(qemu_group)" "$1"; "${SUDO[@]}" chmod "${2:-0600}" "$1"; }
+set_root_readonly(){ "${SUDO[@]}" chown "root:$(qemu_group)" "$1"; "${SUDO[@]}" chmod 0440 "$1"; }
+
+safe_tmp_dir(){
+  local base="${XDG_RUNTIME_DIR:-/tmp}" d
+  [[ -d "$base" && -w "$base" ]] || base=/tmp
+  d="$base/safebox-${UID}"
+  if [[ ! -d "$d" ]]; then mkdir -m 0700 -- "$d" || die "Temp-Verzeichnis kann nicht erstellt werden: $d"; fi
+  [[ ! -L "$d" && "$(stat -c %u "$d" 2>/dev/null)" == "$UID" ]] || die "Unsicheres Temp-Verzeichnis: $d"
+  chmod 0700 "$d" || die "Temp-Verzeichnis kann nicht gehärtet werden: $d"
+  printf '%s\n' "$d"
+}
+safe_mktemp(){ local suffix=${1:-tmp}; mktemp -p "$(safe_tmp_dir)" "safebox.XXXXXX.$suffix"; }
+
+ensure_lock_file(){
+  local caller_group
+  caller_group="$(id -gn)"
+  if [[ ! -e "$SAFEBOX_LOCK_FILE" ]]; then
+    "${SUDO[@]}" install -m 0660 -o root -g "$caller_group" /dev/null "$SAFEBOX_LOCK_FILE"
+  fi
+  [[ -f "$SAFEBOX_LOCK_FILE" && ! -L "$SAFEBOX_LOCK_FILE" ]] || die "Unsicherer Lock-Pfad: $SAFEBOX_LOCK_FILE"
+  [[ "$(stat -c %U "$SAFEBOX_LOCK_FILE" 2>/dev/null)" == root ]] || die 'SafeBox-Lock ist nicht root-owned'
+  if [[ "$(stat -c %G "$SAFEBOX_LOCK_FILE" 2>/dev/null)" != "$caller_group" ]]; then
+    "${SUDO[@]}" chgrp "$caller_group" "$SAFEBOX_LOCK_FILE"
+  fi
+  "${SUDO[@]}" chmod 0660 "$SAFEBOX_LOCK_FILE"
+}
+acquire_lock(){
+  ensure_lock_file
+  exec 9<>"$SAFEBOX_LOCK_FILE"
+  flock -n 9 || die 'Eine andere SafeBox-Operation läuft bereits.'
+}
+
+# Require a successful inventory from libvirt AND independent /proc inspection.
+# An unreachable daemon or an unseen QEMU process is never "no VM".
+proc_absent(){
+  "${SUDO[@]}" python3 "$ROOT/tools/proc-absence.py" "${1:---all}"
+}
+libvirt_domain_inventory(){
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --all --name
+}
+assert_no_running(){
+  local inventory running
+  inventory="$(libvirt_domain_inventory)" || die 'libvirt nicht erreichbar; VM-Zustand unbekannt. Keine Bereinigung erlaubt.'
+  running="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --name)" || die 'Aktive libvirt-Domains nicht sicher ermittelbar'
+  running="$(grep '^safebox-' <<<"$running" || true)"
+  [[ -z "$running" ]] || die "SafeBox läuft bereits: $running"
+  proc_absent --all || die 'SafeBox-/QEMU-Prozesszustand unklar oder QEMU läuft weiter; Abbruch.'
+}
+
+assert_host(){
+  need virsh; need aa-status; need python3
+  aa-status --enabled >/dev/null || die 'AppArmor aus'
+  local c tmp
+  tmp="$(safe_mktemp conf)"
+  "${SUDO[@]}" cat "$SAFEBOX_QEMU_CONF" >"$tmp" || { rm -f -- "$tmp"; die 'qemu.conf ist nicht lesbar'; }
+  if ! python3 "$ROOT/tools/check-host-qemu-config.py" "$tmp"; then
+    rm -f -- "$tmp"; die 'Host-Härtung fehlt oder besitzt ungültige/mehrdeutige Einstellungen'
+  fi
+  rm -f -- "$tmp"
+}
+
+
+identity_path(){ printf '%s/identities/%s.json\n' "$SAFEBOX_RUNTIME_DIR" "$1"; }
+record_domain_identity(){
+  local d=$1 profile=${2:-hardened} pid uuid start exe tmp path
+  [[ "$d" =~ ^safebox-[A-Za-z0-9._-]+$ ]] || die 'Ungültige Domain für Runtime-Identität'
+  pid="$(SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/domain-pid.sh" "$d")" || die 'QEMU-PID für Runtime-Identität nicht ermittelbar'
+  uuid="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" domuuid "$d" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+  [[ "$uuid" =~ ^[0-9a-f-]{36}$ ]] || die 'Domain-UUID für Runtime-Identität nicht ermittelbar'
+  start="$("${SUDO[@]}" awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
+  exe="$("${SUDO[@]}" readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  [[ "$start" =~ ^[0-9]+$ && "$exe" == */qemu-system-x86_64 ]] || die 'QEMU-Prozessidentität nicht stabil'
+  tmp="$(safe_mktemp json)"; path="$(identity_path "$d")"
+  python3 - "$tmp" "$d" "$uuid" "$pid" "$start" "$profile" <<'PYID'
+import json,sys
+out,domain,uuid,pid,start,profile=sys.argv[1:]
+with open(out,'w',encoding='utf-8') as f:
+    json.dump({'schema':1,'domain':domain,'uuid':uuid,'pid':int(pid),'starttime':int(start),'profile':profile},f,sort_keys=True,indent=2)
+    f.write('\n')
+PYID
+  "${SUDO[@]}" install -d -m 0700 -o root -g root "$SAFEBOX_RUNTIME_DIR/identities"
+  "${SUDO[@]}" install -m 0400 -o root -g root "$tmp" "$path"
+  rm -f "$tmp"
+}
+remove_domain_identity(){
+  local d=$1
+  [[ "$d" =~ ^safebox-[A-Za-z0-9._-]+$ ]] || return 0
+  "${SUDO[@]}" rm -f -- "$(identity_path "$d")"
+}
+
+libvirt_remote_absent(){
+  if ss -lnt 2>/dev/null | grep -Eq ':(16509|16514)[[:space:]]'; then return 1; fi
+  local u
+  for u in libvirtd-tcp.socket libvirtd-tls.socket virtproxyd-tcp.socket virtproxyd-tls.socket; do
+    if systemctl is-active --quiet "$u" 2>/dev/null; then return 1; fi
+  done
+  return 0
+}
+
+qemu_security_gate(){
+  local mode=${1:-network} checker="$ROOT/tools/qemu-security-check.sh"
+  [[ -x "$checker" ]] || die 'QEMU-Sicherheitscheck fehlt'
+  SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$checker" "$mode" || die 'QEMU/CVE-Sicherheitsgate fehlgeschlagen'
+}
+
+validate_resources(){
+  local vars=(SAFEBOX_RAM_MIB SAFEBOX_VCPUS SAFEBOX_MEM_HARD_MIB SAFEBOX_IOTHREADS SAFEBOX_WATCH_INTERVAL SAFEBOX_CPU_PERIOD_US SAFEBOX_CPU_MAX_PERCENT SAFEBOX_DISK_TOTAL_BYTES_SEC SAFEBOX_DISK_TOTAL_IOPS_SEC SAFEBOX_MIN_FREE_GIB SAFEBOX_RUNTIME_MIN_FREE_GIB SAFEBOX_OVERLAY_MAX_GIB)
+  local v
+  for v in "${vars[@]}"; do [[ "${!v}" =~ ^[0-9]+$ ]] || die "$v muss numerisch sein"; done
+  (( SAFEBOX_RAM_MIB >= 2048 && SAFEBOX_RAM_MIB <= 65536 )) || die 'Gast-RAM muss zwischen 2048 und 65536 MiB liegen'
+  (( SAFEBOX_VCPUS >= 1 && SAFEBOX_VCPUS <= 32 )) || die 'vCPU-Zahl muss zwischen 1 und 32 liegen'
+  (( SAFEBOX_MEM_HARD_MIB >= SAFEBOX_RAM_MIB + 1024 )) || die 'SAFEBOX_MEM_HARD_MIB muss mindestens Gast-RAM + 1024 MiB sein'
+  (( SAFEBOX_IOTHREADS == 1 )) || die 'RC5 unterstützt exakt einen IOThread'
+  (( SAFEBOX_WATCH_INTERVAL >= 2 && SAFEBOX_WATCH_INTERVAL <= 60 )) || die 'SAFEBOX_WATCH_INTERVAL muss zwischen 2 und 60 Sekunden liegen'
+  (( SAFEBOX_CPU_PERIOD_US >= 1000 && SAFEBOX_CPU_PERIOD_US <= 1000000 )) || die 'CPU-Periode außerhalb libvirt-Grenzen'
+  (( SAFEBOX_CPU_MAX_PERCENT >= 10 && SAFEBOX_CPU_MAX_PERCENT <= 100 )) || die 'CPU-Maximum muss zwischen 10 und 100 Prozent liegen'
+  (( SAFEBOX_DISK_TOTAL_BYTES_SEC >= 1048576 )) || die 'Disk-Byte-Limit ist zu klein'
+  (( SAFEBOX_DISK_TOTAL_IOPS_SEC >= 100 )) || die 'Disk-IOPS-Limit ist zu klein'
+  (( SAFEBOX_MIN_FREE_GIB >= 2 && SAFEBOX_RUNTIME_MIN_FREE_GIB >= 1 )) || die 'Storage-Reserve zu klein'
+  (( SAFEBOX_OVERLAY_MAX_GIB >= 2 )) || die 'Overlay-Maximum zu klein'
+  [[ "$SAFEBOX_NET_BACKEND" == qemu ]] || die 'SafeBox erlaubt ausschließlich SAFEBOX_NET_BACKEND=qemu'
+  [[ "$SAFEBOX_REQUIRE_ENCRYPTED_STORAGE" == 1 ]] || die 'RC5 benötigt zwingend LUKS2-Storage'
+  [[ "$SAFEBOX_SAMPLE_MAX_MIB" =~ ^[0-9]+$ ]] && (( SAFEBOX_SAMPLE_MAX_MIB >= 1 && SAFEBOX_SAMPLE_MAX_MIB <= 512 )) || die 'Sample-Grenze ungültig' 
+}
+
+bytes_for_gib(){ printf '%s\n' $(( $1 * 1024 * 1024 * 1024 )); }
+disk_size_bytes(){ numfmt --from=iec "$SAFEBOX_DISK_SIZE" 2>/dev/null || die "Ungültige SAFEBOX_DISK_SIZE: $SAFEBOX_DISK_SIZE"; }
+require_storage_headroom(){
+  local disk=${1:-} avail required reserve target allocated=0
+  prepare_storage
+  avail="$("${SUDO[@]}" df -PB1 "$SAFEBOX_STORAGE" | awk 'NR==2 {print $4}')"
+  [[ "$avail" =~ ^[0-9]+$ ]] || die 'Freier Speicher konnte nicht ermittelt werden'
+  reserve="$(bytes_for_gib "$SAFEBOX_MIN_FREE_GIB")"
+  target="$(bytes_for_gib "$SAFEBOX_OVERLAY_MAX_GIB")"
+  if [[ -n "$disk" ]] && "${SUDO[@]}" test -f "$disk"; then
+    allocated="$("${SUDO[@]}" stat -c '%b %B' "$disk" | awk '{print $1*$2}')"
+  fi
+  (( allocated < target )) || required=$reserve
+  if (( allocated < target )); then required=$(( reserve + target - allocated )); fi
+  (( avail >= required )) || die "Zu wenig freier Host-Speicher für eine vollständig nutzbare SafeBox. Benötigt: $((required/1024/1024/1024)) GiB, verfügbar: $((avail/1024/1024/1024)) GiB"
+}
+
+verify_debian_iso(){
+  local iso=${1:-} sums=${2:-} sig=${3:-}
+  [[ -f "$iso" && -f "$sums" && -f "$sig" ]] || die 'verify-debian-iso ISO SHA256SUMS SHA256SUMS.sign'
+  need gpgv
+  local keyring='' candidate name expected got
+  for candidate in /usr/share/keyrings/debian-role-keys.pgp /usr/share/keyrings/debian-role-keys.gpg; do
+    if [[ -r "$candidate" ]]; then keyring=$candidate; break; fi
+  done
+  [[ -n "$keyring" ]] || die 'Debian Rollen-Keyring fehlt (Paket: debian-keyring)'
+  gpgv --keyring "$keyring" "$sig" "$sums" >/dev/null 2>&1 || die 'Debian-CD-Signatur von SHA256SUMS ungültig'
+  name="$(basename -- "$iso")"
+  expected="$(awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}' "$sums")"
+  [[ "$expected" =~ ^[A-Fa-f0-9]{64}$ ]] || die "ISO $name fehlt in SHA256SUMS"
+  got="$(sha256sum "$iso" | awk '{print $1}')"
+  [[ "${got,,}" == "${expected,,}" ]] || die "ISO SHA256 falsch: $got"
+  echo '[PASS] Debian-Signatur und ISO-SHA-256 sind gültig.'
+}
+
+verify_iso_hash_only(){
+  local iso=${1:-} expected=${2:-} got
+  [[ -f "$iso" && "$expected" =~ ^[A-Fa-f0-9]{64}$ ]] || die 'verify-iso-hash ISO SHA256'
+  got="$(sha256sum "$iso" | awk '{print $1}')"
+  [[ "${got,,}" == "${expected,,}" ]] || die "ISO SHA256 falsch: $got"
+  echo '[PASS] ISO SHA-256 stimmt (nicht signaturauthentifiziert).'
+}
+
+render(){
+  local tpl=$1 out=$2 domain=$3 disk=$4 net=$5 iso=${6:-}
+  local cpu_quota
+  cpu_quota=$(( SAFEBOX_VCPUS * SAFEBOX_CPU_PERIOD_US * SAFEBOX_CPU_MAX_PERCENT / 100 ))
+  python3 - "$tpl" "$out" "$domain" "$disk" "$net" "$iso" "$SAFEBOX_RAM_MIB" "$SAFEBOX_VCPUS" "$SAFEBOX_MEM_HARD_MIB" "$SAFEBOX_IOTHREADS" "$SAFEBOX_CPU_PERIOD_US" "$cpu_quota" "$SAFEBOX_DISK_TOTAL_BYTES_SEC" "$SAFEBOX_DISK_TOTAL_IOPS_SEC" <<'PYSCRIPT'
+from pathlib import Path
+import os,sys
+p,out,dom,disk,net,iso,ram,vcpu,mem,iot,period,quota,bytes_sec,iops=sys.argv[1:]
+s=Path(p).read_text()
+rep={'__DOMAIN_NAME__':dom,'__DISK_IMAGE__':disk,'__ISO_IMAGE__':iso,'__RAM_MIB__':ram,'__VCPUS__':vcpu,'__MEM_HARD_MIB__':mem,'__IOTHREADS__':iot,'__NET_BACKEND__':os.environ.get('SAFEBOX_NET_BACKEND','qemu'),'__CPU_PERIOD_US__':period,'__CPU_GLOBAL_QUOTA_US__':quota,'__DISK_TOTAL_BYTES_SEC__':bytes_sec,'__DISK_TOTAL_IOPS_SEC__':iops}
+for k,v in rep.items():
+    if any(c in v for c in "&<>\"'\n\r"): raise SystemExit(f'Unsicherer Template-Wert: {v!r}')
+    s=s.replace(k,v)
+s=s.replace('__NETWORK_BLOCK__',net)
+# RC4 interpolates this ONLY for the malware sample image.
+s=s.replace('__SAMPLE_BLOCK__',os.environ.get('SAFEBOX_RENDER_SAMPLE_BLOCK',''))
+Path(out).write_text(s)
+PYSCRIPT
+}
+
+network_block(){ cat <<EOF2
+    <interface type='network'>
+      <mac address='$SAFEBOX_MAC'/><source network='$SAFEBOX_NETWORK'/><model type='$SAFEBOX_NET_MODEL'/><rom bar='off'/><port isolated='yes'/>
+      <filterref filter='$SAFEBOX_NWFILTER'><parameter name='IP' value='$SAFEBOX_GUEST_IP'/><parameter name='CTRL_IP_LEARNING' value='none'/></filterref>
+    </interface>
+EOF2
+}
+
+verify_network(){
+  local name=$1 bridge=$2 mode=$3 tmp
+  tmp="$(safe_mktemp xml)"
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-dumpxml "$name" >"$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  x(){ xmllint --xpath "$1" "$tmp" 2>/dev/null; }
+  if [[ "$(x 'string(/network/forward/@mode)')" != nat || "$(x 'string(/network/bridge/@name)')" != "$bridge" || "$(x 'string(/network/port/@isolated)')" != yes || "$(x 'string(/network/ip/@address)')" != "$SAFEBOX_GATEWAY" ]]; then rm -f "$tmp"; return 1; fi
+  if [[ $mode == runtime ]]; then
+    if [[ "$(x 'count(/network/dns[@enable="no"])')" != 1 || "$(x 'count(/network/ip/dhcp)')" != 0 ]]; then rm -f "$tmp"; return 1; fi
+  fi
+  rm -f "$tmp"
+}
+
+runtime_host_services_absent(){ ! ss -lntu 2>/dev/null | grep -Eq '10\.77\.0\.1:(53|67)[[:space:]]'; }
+
+ensure_network(){
+  local mode=$1 name bridge xml other
+  installed_helpers_ok || die 'Root-owned Runtime-Helfer fehlen/abweichend. install-host.sh erneut ausführen.'
+  if [[ $mode == runtime ]]; then name=$SAFEBOX_NETWORK; bridge=$SAFEBOX_BRIDGE; xml=$ROOT/network/safebox-net.xml; other=$SAFEBOX_INSTALL_NETWORK_NAME; else name=$SAFEBOX_INSTALL_NETWORK_NAME; bridge=$SAFEBOX_INSTALL_BRIDGE; xml=$ROOT/network/safebox-install-net.xml; other=$SAFEBOX_NETWORK; fi
+  if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$other" 2>/dev/null | grep -q 'Active:.*yes'; then
+    if [[ $mode == installer ]]; then "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-destroy "$other" >/dev/null; else die "Installationsnetz $other ist noch aktiv"; fi
+  fi
+  if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$name" >/dev/null 2>&1; then verify_network "$name" "$bridge" "$mode" || die "Netz $name weicht ab"; else "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-define "$xml" >/dev/null; fi
+  if ! "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$name" | grep -q 'Active:.*yes'; then "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-start "$name" >/dev/null; fi
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-autostart "$name" --disable >/dev/null
+  verify_network "$name" "$bridge" "$mode" || die 'Netzverifikation fehlgeschlagen'
+  "${SUDO[@]}" /usr/bin/bash "$SAFEBOX_LIBEXEC/apply-firewall.sh"
+  if [[ $mode == runtime ]]; then runtime_host_services_absent || die 'Runtime-Bridge hat unerwarteten DHCP/DNS-Listener auf 10.77.0.1'; fi
+  "${SUDO[@]}" /usr/bin/bash "$SAFEBOX_LIBEXEC/firewall-verify.sh" >/dev/null || die 'Firewall-Verifikation fehlgeschlagen'
+}
+
+remove_install_net(){
+  if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-info "$SAFEBOX_INSTALL_NETWORK_NAME" >/dev/null 2>&1; then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-destroy "$SAFEBOX_INSTALL_NETWORK_NAME" >/dev/null 2>&1 || true
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" net-undefine "$SAFEBOX_INSTALL_NETWORK_NAME" >/dev/null
+  fi
+}
+
+create_base_metadata(){
+  local digest virtual id tmp
+  digest="$("${SUDO[@]}" awk '{print $1; exit}' "$SAFEBOX_BASE_HASH")"
+  virtual="$("${SUDO[@]}" qemu-img info --output=json "$SAFEBOX_BASE_IMAGE" | jq -r '."virtual-size"')"
+  id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  tmp="$(safe_mktemp json)"
+  python3 - "$tmp" "$id" "$digest" "$SAFEBOX_BASE_IMAGE" "$SAFEBOX_VERSION" "$virtual" <<'PY'
+import datetime,json,os,sys
+out,bid,digest,path,version,virtual=sys.argv[1:]
+data={'schema':1,'base_id':bid,'sha256':digest,'base_path':os.path.realpath(path),'safebox_version':version,'virtual_size':int(virtual),'sealed_at_utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+with open(out,'w',encoding='utf-8') as f: json.dump(data,f,sort_keys=True,indent=2); f.write('\n')
+PY
+  "${SUDO[@]}" install -m 0440 -o root -g "$(qemu_group)" "$tmp" "$SAFEBOX_BASE_META"
+  rm -f "$tmp"
+}
+
+verify_base(){
+  need qemu-img; need jq
+  if ! "${SUDO[@]}" test -f "$SAFEBOX_BASE_IMAGE" || ! "${SUDO[@]}" test -f "$SAFEBOX_BASE_HASH" || ! "${SUDO[@]}" test -f "$SAFEBOX_BASE_META"; then
+    die 'Versiegelte Basis oder Metadaten fehlen'
+  fi
+  [[ "$("${SUDO[@]}" stat -c %a "$SAFEBOX_BASE_IMAGE")" == 440 && "$("${SUDO[@]}" stat -c %U "$SAFEBOX_BASE_IMAGE")" == root ]] || die 'Basis-Rechte falsch'
+  [[ "$("${SUDO[@]}" qemu-img info --output=json "$SAFEBOX_BASE_IMAGE" | jq -r .format)" == qcow2 ]] || die 'Basis nicht qcow2'
+  [[ "$SAFEBOX_VERIFY_BASE_HASH" == 1 ]] || die 'Basis-Hashprüfung darf nicht deaktiviert werden'
+  "${SUDO[@]}" sha256sum -c "$SAFEBOX_BASE_HASH" >/dev/null || die 'Basis-Hash falsch'
+  local digest meta_digest meta_path meta_version
+  digest="$("${SUDO[@]}" awk '{print $1; exit}' "$SAFEBOX_BASE_HASH")"
+  meta_digest="$("${SUDO[@]}" jq -r .sha256 "$SAFEBOX_BASE_META")"
+  meta_path="$("${SUDO[@]}" jq -r .base_path "$SAFEBOX_BASE_META")"
+  meta_version="$("${SUDO[@]}" jq -r .safebox_version "$SAFEBOX_BASE_META")"
+  [[ "$meta_version" == "$SAFEBOX_VERSION" ]] || die "Basis wurde mit SafeBox $meta_version versiegelt; erwartet wird $SAFEBOX_VERSION. Basis neu aufbauen."
+  [[ "$meta_digest" == "$digest" && "$meta_path" == "$("${SUDO[@]}" readlink -f "$SAFEBOX_BASE_IMAGE")" ]] || die 'Basis-Metadaten stimmen nicht zum Basisimage'
+  [[ "$("${SUDO[@]}" stat -c %U "$SAFEBOX_BASE_META")" == root ]] || die 'Basis-Metadaten nicht root-owned'
+}
+
+verify_overlay(){
+  local d=$1 info
+  info="$("${SUDO[@]}" qemu-img info --output=json "$d")"
+  [[ "$(jq -r .format <<<"$info")" == qcow2 ]] || die 'Overlay nicht qcow2'
+  [[ "$(jq -r '."full-backing-filename" // ."backing-filename" // empty' <<<"$info")" == "$SAFEBOX_BASE_IMAGE" ]] || die 'Backing-Image unerwartet'
+  [[ "$(jq -r '."virtual-size"' <<<"$info")" == "$(disk_size_bytes)" ]] || die 'Overlay-Virtual-Size weicht ab'
+}
+
+create_overlay_metadata(){
+  local mode=$1 domain=$2 disk=$3 meta=$4 base_json tmp
+  base_json="$("${SUDO[@]}" cat "$SAFEBOX_BASE_META")"
+  tmp="$(safe_mktemp json)"
+  python3 - "$tmp" "$mode" "$domain" "$disk" "$SAFEBOX_BASE_IMAGE" "$SAFEBOX_VERSION" "$base_json" <<'PY'
+import datetime,json,os,sys
+out,mode,domain,disk,base,version,base_s=sys.argv[1:]
+b=json.loads(base_s)
+data={'schema':1,'mode':mode,'domain':domain,'disk':os.path.realpath(disk),'base_path':os.path.realpath(base),'base_id':b['base_id'],'base_sha256':b['sha256'],'safebox_version':version,'created_at_utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+with open(out,'w',encoding='utf-8') as f: json.dump(data,f,sort_keys=True,indent=2); f.write('\n')
+PY
+  "${SUDO[@]}" install -m 0440 -o root -g "$(qemu_group)" "$tmp" "$meta"
+  rm -f "$tmp"
+}
+
+verify_overlay_binding(){
+  local mode=$1 domain=$2 disk=$3
+  SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/storage-verify.sh" "$domain" "$mode" "$disk" >/dev/null || die 'Overlay-Metadaten/Storage-Limit ungültig'
+}
+
+create_base(){
+  local iso=${1:-} sums=${2:-} sig=${3:-} xml
+  verify_debian_iso "$iso" "$sums" "$sig"; apply_profile hardened; validate_resources; assert_host; installed_helpers_ok || die 'Root-owned Runtime-Helfer fehlen/abweichend. install-host.sh erneut ausführen.'; qemu_security_gate network; assert_no_running; prepare_storage; require_storage_headroom "$SAFEBOX_BASE_IMAGE"; ensure_network installer
+  if "${SUDO[@]}" test -f "$SAFEBOX_BASE_IMAGE" && [[ "$("${SUDO[@]}" stat -c %a "$SAFEBOX_BASE_IMAGE")" == 440 ]]; then die 'Basis ist bereits versiegelt; create-base verweigert Überschreiben'; fi
+  "${SUDO[@]}" rm -f "$SAFEBOX_BASE_HASH" "$SAFEBOX_BASE_META"
+  "${SUDO[@]}" cp -- "$(readlink -f "$iso")" "$SAFEBOX_INSTALL_ISO"; set_root_readonly "$SAFEBOX_INSTALL_ISO"
+  if ! "${SUDO[@]}" test -f "$SAFEBOX_BASE_IMAGE"; then "${SUDO[@]}" qemu-img create -f qcow2 "$SAFEBOX_BASE_IMAGE" "$SAFEBOX_DISK_SIZE" >/dev/null; fi
+  set_qemu_owner "$SAFEBOX_BASE_IMAGE"
+  xml="$(safe_mktemp xml)"; render "$ROOT/vm/templates/installer.xml.in" "$xml" safebox-installer "$SAFEBOX_BASE_IMAGE" '' "$SAFEBOX_INSTALL_ISO"; virt-xml-validate "$xml" domain >/dev/null
+  if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo safebox-installer >/dev/null 2>&1; then "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" undefine safebox-installer >/dev/null 2>&1 || true; fi
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" define "$xml" >/dev/null
+  "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" start safebox-installer >/dev/null
+  rm -f "$xml"
+  if ! "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/runtime-verify.sh" safebox-installer installer "$SAFEBOX_BASE_IMAGE"; then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" destroy safebox-installer >/dev/null 2>&1 || true
+    die 'Installer-Attestation fehlgeschlagen; Basisimage und Identität bleiben erhalten'
+  fi
+  record_domain_identity safebox-installer hardened
+  if ! start_watch safebox-installer installer "$SAFEBOX_BASE_IMAGE"; then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" destroy safebox-installer >/dev/null 2>&1 || true
+    if ( assert_no_running ) >/dev/null 2>&1; then remove_domain_identity safebox-installer; fi
+    die 'Installer-Watchdog konnte nicht gestartet werden; VM-Endzustand muss geprüft werden'
+  fi
+  echo '[OK] Installer gestartet; Watchdog aktiv.'
+}
+
+seal_base(){
+  need virt-cat
+  # Never seal/modify disk if libvirt is down or an orphaned QEMU might still hold it.
+  assert_no_running
+  if "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dominfo safebox-installer >/dev/null 2>&1; then
+    local st
+    st="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" domstate safebox-installer 2>/dev/null || true)"
+    if grep -qiE 'running|paused|idle' <<<"$st"; then die 'Installer läuft noch'; fi
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" undefine safebox-installer >/dev/null
+    remove_domain_identity safebox-installer
+  fi
+  remove_install_net
+  /usr/bin/bash "$ROOT/tools/verify-base-guest.sh" "$SAFEBOX_BASE_IMAGE"
+  "${SUDO[@]}" qemu-img check "$SAFEBOX_BASE_IMAGE" >/dev/null
+  set_root_readonly "$SAFEBOX_BASE_IMAGE"
+  local t
+  t="$(safe_mktemp sha256)"
+  "${SUDO[@]}" sha256sum "$SAFEBOX_BASE_IMAGE" >"$t"
+  "${SUDO[@]}" install -m 0440 -o root -g "$(qemu_group)" "$t" "$SAFEBOX_BASE_HASH"
+  rm -f "$t"
+  create_base_metadata
+  "${SUDO[@]}" rm -f "$SAFEBOX_INSTALL_ISO"
+  verify_base
+  echo '[OK] Basis offline geprüft, gebunden und versiegelt.'
+}
+
+installed_helpers_ok(){
+  local f
+  [[ -r "$SAFEBOX_INSTALLED_CONFIG" ]] || return 1
+  cmp -s "$ROOT/config/defaults.conf" "$SAFEBOX_INSTALLED_CONFIG" || return 1
+  for f in security_gate.py hardware-acceptance.py runtime-watch.sh runtime-verify.sh firewall-verify.sh qemu-security-check.sh kill-domain.sh domain-pid.sh storage-verify.sh nwfilter-verify.sh xml-policy-check.py proc-absence.py nwfilter-canon.py check-host-qemu-config.py local-routes.py apply-firewall.sh stage-sample.py sample-verify.sh storage-crypto-check.py; do
+    [[ -x "$SAFEBOX_LIBEXEC/$f" ]] || return 1
+    cmp -s "$ROOT/tools/$f" "$SAFEBOX_LIBEXEC/$f" || return 1
+    [[ "$(stat -c %U "$SAFEBOX_LIBEXEC/$f" 2>/dev/null)" == root ]] || return 1
+    [[ $(( 8#$(stat -c %a "$SAFEBOX_LIBEXEC/$f" 2>/dev/null) & 8#022 )) -eq 0 ]] || return 1
+  done
+  [[ -r "$SAFEBOX_LIBEXEC/runtime.xml.in" && ! -L "$SAFEBOX_LIBEXEC/runtime.xml.in" ]] || return 1
+  cmp -s "$ROOT/vm/templates/runtime.xml.in" "$SAFEBOX_LIBEXEC/runtime.xml.in" || return 1
+  [[ "$(stat -c %U "$SAFEBOX_LIBEXEC/runtime.xml.in" 2>/dev/null)" == root ]] || return 1
+  [[ $(( 8#$(stat -c %a "$SAFEBOX_LIBEXEC/runtime.xml.in" 2>/dev/null) & 8#022 )) -eq 0 ]] || return 1
+  [[ -r /etc/systemd/system/safebox-kill@.service && "$(stat -c %U /etc/systemd/system/safebox-kill@.service 2>/dev/null)" == root ]] || return 1
+  [[ -r "$SAFEBOX_NWFILTER_XML" && "$(stat -c %U "$SAFEBOX_NWFILTER_XML" 2>/dev/null)" == root ]] || return 1
+  [[ -r "$SAFEBOX_INSTALL_NWFILTER_XML" && "$(stat -c %U "$SAFEBOX_INSTALL_NWFILTER_XML" 2>/dev/null)" == root ]] || return 1
+  cmp -s "$ROOT/network/safebox-runtime-filter.xml" "$SAFEBOX_NWFILTER_XML" || return 1
+  cmp -s "$ROOT/network/safebox-install-filter.xml" "$SAFEBOX_INSTALL_NWFILTER_XML" || return 1
+}
+
+start_watch(){
+  local d=$1 m=$2 disk=$3 unit="safebox-watch-${d}" kill_unit i
+  command -v systemd-run >/dev/null || return 1
+  installed_helpers_ok || { echo 'FEHLER: Root-owned Watchdog-Helfer fehlen/abweichend. install-host.sh erneut ausführen.' >&2; return 1; }
+  "${SUDO[@]}" systemctl stop "$unit.service" >/dev/null 2>&1 || true
+  kill_unit="$(systemd-escape --template=safebox-kill@.service "$d")" || return 1
+  "${SUDO[@]}" systemd-run --quiet --collect --unit="$unit" \
+    --property=Type=simple \
+    --property=Restart=on-failure \
+    --property=RestartSec=1s \
+    --property=StartLimitIntervalSec=30s \
+    --property=StartLimitBurst=3 \
+    --property=OnFailure="$kill_unit" \
+    --property=NoNewPrivileges=yes \
+    --property=PrivateTmp=yes \
+    --property=ProtectSystem=strict \
+    --property=ProtectHome=yes \
+    --setenv=SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" \
+    --setenv=SAFEBOX_PROFILE="$SAFEBOX_PROFILE" \
+    --setenv=SAFEBOX_RAM_MIB="$SAFEBOX_RAM_MIB" \
+    --setenv=SAFEBOX_VCPUS="$SAFEBOX_VCPUS" \
+    --setenv=SAFEBOX_MEM_HARD_MIB="$SAFEBOX_MEM_HARD_MIB" \
+    --setenv=SAFEBOX_IOTHREADS="$SAFEBOX_IOTHREADS" \
+    --setenv=SAFEBOX_WATCH_INTERVAL="$SAFEBOX_WATCH_INTERVAL" \
+    --setenv=SAFEBOX_CPU_PERIOD_US="$SAFEBOX_CPU_PERIOD_US" \
+    --setenv=SAFEBOX_CPU_MAX_PERCENT="$SAFEBOX_CPU_MAX_PERCENT" \
+    --setenv=SAFEBOX_DISK_TOTAL_BYTES_SEC="$SAFEBOX_DISK_TOTAL_BYTES_SEC" \
+    --setenv=SAFEBOX_DISK_TOTAL_IOPS_SEC="$SAFEBOX_DISK_TOTAL_IOPS_SEC" \
+    --setenv=SAFEBOX_RUNTIME_MIN_FREE_GIB="$SAFEBOX_RUNTIME_MIN_FREE_GIB" \
+    --setenv=SAFEBOX_OVERLAY_MAX_GIB="$SAFEBOX_OVERLAY_MAX_GIB" \
+    -- "$SAFEBOX_LIBEXEC/runtime-watch.sh" "$d" "$m" "$disk" || return 1
+  for i in {1..30}; do
+    if "${SUDO[@]}" systemctl is-active --quiet "$unit.service"; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+
+# RC4: No network capable runtime modes. Installer networking is only for trusted
+# OS bootstrap. Malware samples are never offered to installer/network domains.
+start_vm(){
+  local mode=${1:-offline} profile stamp domain disk meta xml vm sample='' sample_iso='' iso_block=''
+  case "$mode" in
+    offline) profile=${2:-hardened}; [[ $# -le 2 ]] || die 'offline [PROFIL]' ;;
+    malware) sample=${2:-}; profile=${3:-hardened}; [[ -n "$sample" && $# -le 3 ]] || die 'malware DATEI [PROFIL]' ;;
+    *) die 'RC5 erlaubt nur start offline oder start malware DATEI. Persistente und vernetzte Malware-VMs sind deaktiviert.';;
+  esac
+  apply_profile "$profile"
+  validate_resources; assert_host
+  installed_helpers_ok || die 'Root-owned Runtime-Helfer fehlen/abweichend. install-host.sh erneut ausführen.'
+  qemu_security_gate offline
+  verify_base; assert_no_running; prepare_storage
+  # RC5: Pflicht-Abnahme bei JEDEM Runtime-Start; keine Umgebungsvariable kann überspringen.
+  # Die vertrauenswürdige root-owned Kopie wird VOR Disk-/Sample-Erzeugung geprüft.
+  "${SUDO[@]}" python3 "$SAFEBOX_LIBEXEC/security_gate.py" check || die 'Keine gültige KVM-Hardware-Abnahme – sudo ./safebox hardware-test ausführen.'
+  # Encrypted host storage is mandatory; rm is NOT advertised as crypto-erase.
+  "${SUDO[@]}" python3 "$SAFEBOX_LIBEXEC/storage-crypto-check.py" "$SAFEBOX_STORAGE" || die 'LUKS2-Storage fehlt; kein Start von Malware-VMs.'
+  stamp="$(date +%Y%m%d-%H%M%S)-$$"
+  domain="safebox-${mode}-$stamp"
+  disk="$SAFEBOX_SESSIONS_DIR/$domain.qcow2"; meta="$disk.meta.json"
+  require_storage_headroom
+  "${SUDO[@]}" qemu-img create -f qcow2 -F qcow2 -b "$SAFEBOX_BASE_IMAGE" "$disk" >/dev/null
+  set_qemu_owner "$disk"
+  create_overlay_metadata "$mode" "$domain" "$disk" "$meta"
+  verify_overlay "$disk"; verify_overlay_binding "$mode" "$domain" "$disk"
+  if [[ "$mode" == malware ]]; then
+    sample_iso="$disk.sample.iso"
+    if ! "${SUDO[@]}" python3 "$SAFEBOX_LIBEXEC/stage-sample.py" "$sample" "$sample_iso" "$(id -g "$(qemu_user)")" "$SAFEBOX_SAMPLE_MAX_MIB"; then
+      [[ -e "$sample_iso" ]] && echo "[WARN] Staging-Reste: $sample_iso" >&2
+      die 'Sample konnte nicht sicher als ISO übernommen werden. Cleanup nach QEMU-Abwesenheitsprüfung ausführen.'
+    fi
+    "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" "$SAFEBOX_LIBEXEC/sample-verify.sh" "$disk" "$sample_iso" || die 'Sample-ISO-Attestation fehlgeschlagen'
+    iso_block="    <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='$sample_iso'/><target dev='sdb' bus='sata'/><readonly/></disk>"
+  fi
+  xml="$(safe_mktemp xml)"
+  # Avoid templating arbitrary attacker-controlled XML: ISO paths live under a
+  # fixed root-owned directory and the helper returns a fixed safe basename.
+  SAFEBOX_RENDER_SAMPLE_BLOCK="$iso_block" render "$ROOT/vm/templates/runtime.xml.in" "$xml" "$domain" "$disk" ''
+  python3 "$ROOT/tools/xml-policy-check.py" "$xml" "$mode" "$disk" "$sample_iso" || die 'Vorstart-XML verletzt Malware-Isolation'
+  virt-xml-validate "$xml" domain >/dev/null || die 'XML-Schema ungültig'
+  if ! "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" create "$xml" >/dev/null; then
+    rm -f -- "$xml"
+    if ( assert_no_running ) >/dev/null 2>&1; then
+      "${SUDO[@]}" rm -f -- "$disk" "$meta" "${disk}.sample.iso" "${disk}.sample.iso.sha256"
+    fi
+    die 'VM-Start fehlgeschlagen; im Zweifelsfall bleiben Beweisdaten erhalten'
+  fi
+  rm -f -- "$xml"
+  if ! "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/runtime-verify.sh" "$domain" "$mode" "$disk" "$sample_iso" ||
+     ! "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/storage-verify.sh" "$domain" "$mode" "$disk"; then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" destroy "$domain" >/dev/null 2>&1 || true
+    die 'Runtime-/Storage-Attestation fehlgeschlagen; Isolation nicht bestätigt, Überreste erhalten'
+  fi
+  # Identity capture can fail after QEMU is already running; it must NOT leave
+  # an unwatched malware domain running on an uncontrolled error exit.
+  if ! (record_domain_identity "$domain" "$SAFEBOX_PROFILE"); then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" destroy "$domain" >/dev/null 2>&1 || true
+    die 'QEMU-Identität konnte nicht attestiert werden; Kill angefordert. Prozess manuell prüfen; Session nicht löschen.'
+  fi
+  if ! start_watch "$domain" "$mode" "$disk"; then
+    "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" destroy "$domain" >/dev/null 2>&1 || true
+    die 'Watchdog-Start fehlgeschlagen; VM-Abschaltung angefordert; manuelle Prozessprüfung erforderlich'
+  fi
+  echo "[OK] $domain gestartet – OFFLINE, kein NIC, Disposable, LUKS2-Storage, Watchdog."
+  if command -v virt-viewer >/dev/null && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    virt-viewer --connect "$SAFEBOX_CONNECT_URI" --wait "$domain" || true
+  fi
+  # Exit is not proof QEMU was terminated. Fail closed and keep forensic remains.
+  local inventory
+  while :; do
+    inventory="$(libvirt_domain_inventory)" || die 'libvirt-Ausfall: Dateien bleiben erhalten, VM-Zustand ungeklärt.'
+    if grep -Fxq -- "$domain" <<<"$inventory"; then sleep 2; continue; fi
+    proc_absent "$domain" || die 'QEMU läuft weiter oder /proc unbekannt: keine Löschung.'
+    break
+  done
+  remove_domain_identity "$domain"
+  "${SUDO[@]}" rm -f -- "$disk" "$meta" "${disk}.sample.iso" "${disk}.sample.iso.sha256"
+  echo '[OK] Disposable-Dateien entfernt (KEINE kryptografische Löschgarantie; LUKS2-Key weiterhin aktiv).'
+}
+
+detect_domain(){
+  local requested=${1:-} d
+  if [[ -n "$requested" ]]; then printf '%s\n' "$requested"; return; fi
+  d="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --name | grep '^safebox-' | head -n1 || true)"
+  [[ -n "$d" ]] || die 'Keine laufende SafeBox-Domain gefunden'
+  printf '%s\n' "$d"
+}
+domain_mode(){ case "$1" in safebox-installer) echo installer;; safebox-malware-*) echo malware;; safebox-offline-*) echo offline;; safebox-persistent) echo persistent;; safebox-disposable-*) echo disposable;; *) echo runtime;; esac; }
+domain_disk(){ "${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" dumpxml "$1" | xmllint --xpath 'string(/domain/devices/disk[@device="disk"]/source/@file)' - 2>/dev/null; }
+
+verify_runtime_cmd(){
+  local d mode disk helper storage sample_iso=""
+  d="$(detect_domain "${1:-}")"; mode="$(domain_mode "$d")"; disk="$(domain_disk "$d")"
+  load_domain_profile "$d"
+  installed_helpers_ok || die 'Root-owned Runtime-Helfer fehlen/abweichend'
+  if [[ "$mode" == offline || "$mode" == malware ]]; then qemu_security_gate offline
+  elif [[ "$mode" == installer ]]; then qemu_security_gate network
+  else die 'Unerlaubter vernetzter Runtime-Modus'; fi
+  if [[ "$mode" == malware ]]; then sample_iso="$disk.sample.iso"; fi
+  helper="$SAFEBOX_LIBEXEC/runtime-verify.sh"; storage="$SAFEBOX_LIBEXEC/storage-verify.sh"
+  "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$helper" "$d" "$mode" "$disk" "$sample_iso"
+  if [[ "$mode" != installer ]]; then "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$storage" "$d" "$mode" "$disk"; fi
+}
+
+status_cmd(){
+  local d=${1:-} mode state unit pid disk alloc free fw='N/A' rt='FAIL' wd='INACTIVE' storage='N/A'
+  if [[ -z "$d" ]]; then
+    local running_domains
+    running_domains="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --name)" || die 'libvirt nicht erreichbar: VM-Zustand unbekannt'
+    d="$(grep '^safebox-' <<<"$running_domains" | head -n1 || true)"
+  fi
+  echo "SafeBox $SAFEBOX_VERSION"
+  if [[ -z "$d" ]]; then echo 'Domain:       keine laufende SafeBox'; return 0; fi
+  load_domain_profile "$d"
+  mode="$(domain_mode "$d")"; state="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" domstate "$d" 2>/dev/null || echo unbekannt)"; unit="safebox-watch-${d}.service"; disk="$(domain_disk "$d")"
+  if "${SUDO[@]}" systemctl is-active --quiet "$unit"; then wd=ACTIVE; fi
+  if [[ "$mode" == offline || "$mode" == malware ]]; then fw='OFFLINE'; else if "${SUDO[@]}" /usr/bin/bash "$SAFEBOX_LIBEXEC/firewall-verify.sh" >/dev/null 2>&1; then fw=VERIFIED; else fw=FAIL; fi; fi
+  if "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/runtime-verify.sh" "$d" "$mode" "$disk" "$( [[ "$mode" == malware ]] && printf '%s.sample.iso' "$disk" || true )" >/dev/null 2>&1; then rt=PASS; fi
+  if [[ "$mode" != installer ]] && "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/storage-verify.sh" "$d" "$mode" "$disk" >/dev/null 2>&1; then storage=PASS; fi
+  pid="$(SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/domain-pid.sh" "$d" 2>/dev/null || echo '?')"
+  alloc="$("${SUDO[@]}" stat -c '%b %B' "$disk" 2>/dev/null | awk '{printf "%.2f", ($1*$2)/1024/1024/1024}' || echo '?')"
+  free="$("${SUDO[@]}" df -BG --output=avail "$SAFEBOX_STORAGE" 2>/dev/null | tail -n1 | tr -d ' G' || echo '?')"
+  printf 'Domain:       %s\nState:        %s\nMode:         %s\nProfile:      %s\nQEMU PID:     %s\nWatchdog:     %s\nFirewall:     %s\nRuntime:      %s\nStorage:      %s\nOverlay:      %s GiB allocated\nHost free:    %s GiB\nCPU cap:      %s%% of %s vCPU capacity\nDisk I/O:     %s B/s, %s IOPS\n' "$d" "$state" "$mode" "$SAFEBOX_PROFILE" "$pid" "$wd" "$fw" "$rt" "$storage" "$alloc" "$free" "$SAFEBOX_CPU_MAX_PERCENT" "$SAFEBOX_VCPUS" "$SAFEBOX_DISK_TOTAL_BYTES_SEC" "$SAFEBOX_DISK_TOTAL_IOPS_SEC"
+}
+
+security_check(){
+  local fail=0 c
+  apply_profile hardened
+  echo "KVM-QEMU-SafeBox $SAFEBOX_VERSION – Security Check"
+  echo "Baseline profile: $SAFEBOX_PROFILE"
+  for c in virsh qemu-img qemu-system-x86_64 nft xmllint jq aa-status virt-cat systemd-run systemd-escape flock numfmt genisoimage cryptsetup lsblk findmnt; do
+    if command -v "$c" >/dev/null; then echo "[PASS] $c"; else echo "[FAIL] $c"; fail=1; fi
+  done
+  if ( validate_resources ); then echo '[PASS] Ressourcen-Konfiguration'; else echo '[FAIL] Ressourcen-Konfiguration'; fail=1; fi
+  if ( assert_host ); then echo '[PASS] libvirt/QEMU Host-Härtung'; else echo '[FAIL] libvirt/QEMU Host-Härtung'; fail=1; fi
+  if libvirt_remote_absent; then echo '[PASS] libvirt nur lokal – keine TCP/TLS-Managementports'; else echo '[FAIL] libvirt Remote-Management lauscht'; fail=1; fi
+  if SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/qemu-security-check.sh" offline >/dev/null 2>&1; then echo '[PASS] QEMU/CVE-Gate offline'; else echo '[FAIL] QEMU/CVE-Gate offline'; fail=1; fi
+  if "${SUDO[@]}" /usr/bin/bash "$SAFEBOX_LIBEXEC/firewall-verify.sh" >/dev/null 2>&1; then echo '[PASS] nftables SafeBox-Policy'; else echo '[FAIL] nftables SafeBox-Policy'; fail=1; fi
+  if "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/nwfilter-verify.sh" >/dev/null 2>&1; then echo '[PASS] libvirt nwfilter Baseline'; else echo '[FAIL] libvirt nwfilter Baseline'; fail=1; fi
+  if installed_helpers_ok; then echo '[PASS] Root-owned Runtime-Helfer synchron'; else echo '[FAIL] Runtime-Helfer fehlen/abweichend'; fail=1; fi
+  if "${SUDO[@]}" python3 "$SAFEBOX_LIBEXEC/security_gate.py" check >/dev/null 2>&1; then echo '[PASS] RC5 Real-KVM-Abnahme für aktuellen Host/Boot gültig'; else echo '[FAIL] RC5 Hardware-Abnahme fehlt/abgelaufen; Malware-Start gesperrt'; fail=1; fi
+  if "${SUDO[@]}" test -f "$SAFEBOX_BASE_IMAGE"; then if ( verify_base ); then echo '[PASS] Basisimage-Integrität und Bindung'; else echo '[FAIL] Basisimage-Integrität'; fail=1; fi; else echo '[INFO] Noch kein Basisimage vorhanden.'; fi
+  if [[ -d "$SAFEBOX_STORAGE" ]]; then
+    if "${SUDO[@]}" python3 "$ROOT/tools/storage-crypto-check.py" "$SAFEBOX_STORAGE"; then echo '[PASS] Storage auf LUKS2'; else echo '[FAIL] Storage nicht sicher auf LUKS2'; fail=1; fi
+    local avail min
+    avail="$("${SUDO[@]}" df -PB1 "$SAFEBOX_STORAGE" | awk 'NR==2 {print $4}')"; min="$(bytes_for_gib "$SAFEBOX_MIN_FREE_GIB")"
+    if [[ "$avail" =~ ^[0-9]+$ ]] && (( avail >= min )); then echo '[PASS] Storage-Reserve'; else echo '[FAIL] Storage-Reserve'; fail=1; fi
+  fi
+  local running d
+  running="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --name)" || { echo '[FAIL] Laufende Domains: libvirt nicht erreichbar'; fail=1; running=''; }
+  while IFS= read -r d; do
+    [[ "$d" == safebox-* ]] || continue
+    if verify_runtime_cmd "$d" >/dev/null 2>&1; then
+      echo "[PASS] Laufende Domain $d attestiert"
+    else
+      echo "[FAIL] Laufende Domain $d nicht attestiert"; fail=1
+    fi
+  done <<<"$running"
+  if ! proc_absent --all >/dev/null 2>&1 && [[ -z "$(grep '^safebox-' <<<"$running")" ]]; then
+    echo '[FAIL] Verwaiste oder nicht lesbare SafeBox-QEMU-Prozesse'; fail=1
+  fi
+  if [[ ${EUID} -ne 0 ]] && id -nG "$USER" | tr ' ' '\n' | grep -Fxq libvirt; then echo '[FAIL] Aufrufender Benutzer ist Mitglied der privilegierten libvirt-Gruppe'; fail=1; else echo '[PASS] Keine dauerhaften libvirt-Gruppenrechte für den Aufrufer'; fi
+  if [[ $fail == 0 ]]; then echo 'Configuration status: READY (keine Garantie gegen Hypervisor-/Kernel-0days)'; else echo 'Configuration status: NOT READY'; fi
+  [[ $fail == 0 ]]
+}
+
+doctor(){ security_check; }
+
+cleanup_cmd(){
+  assert_no_running
+  local unit f count=0
+  while read -r unit; do
+    [[ -n "$unit" ]] || continue
+    "${SUDO[@]}" systemctl stop "$unit" >/dev/null 2>&1 || true
+    "${SUDO[@]}" systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+  done < <("${SUDO[@]}" systemctl list-units --all --plain --no-legend 'safebox-watch-*.service' 2>/dev/null | awk '{print $1}')
+  "${SUDO[@]}" systemctl reset-failed 'safebox-kill@*.service' >/dev/null 2>&1 || true
+  assert_no_running  # Recheck after service manipulations; never erase uncertain evidence.
+  if "${SUDO[@]}" test -d "$SAFEBOX_RUNTIME_DIR/identities"; then
+    "${SUDO[@]}" find "$SAFEBOX_RUNTIME_DIR/identities" -maxdepth 1 -type f -name 'safebox-*.json' -delete
+  fi
+  if "${SUDO[@]}" test -d "$SAFEBOX_SESSIONS_DIR"; then
+    while IFS= read -r -d '' f; do
+      "${SUDO[@]}" rm -f -- "$f" "$f.meta.json" "$f.sample.iso" "$f.sample.iso.sha256"; count=$((count+1))
+    done < <("${SUDO[@]}" find "$SAFEBOX_SESSIONS_DIR" -maxdepth 1 -type f \( -name 'safebox-disposable-*.qcow2' -o -name 'safebox-offline-*.qcow2' \) -print0)
+    "${SUDO[@]}" find "$SAFEBOX_SESSIONS_DIR" -maxdepth 1 -type f -name '*.meta.json' -delete
+  fi
+  echo "[OK] Cleanup abgeschlossen: $count verwaiste Session-Overlays entfernt. Persistent-Daten wurden nicht gelöscht."
+}
+
+cmd=${1:-help}; shift || true
+case "$cmd" in
+  help|-h|--help) usage;;
+  viewer)
+    need virt-viewer
+    d="$(detect_domain "${1:-}")"
+    [[ "$d" == safebox-* ]] || die 'Ungültiger SafeBox-Domainname'
+    # virt-viewer uses the libvirt graphics-FD API for listen type=none.
+    exec virt-viewer --connect "$SAFEBOX_CONNECT_URI" "$d";;
+  profiles) profiles_cmd;;
+  status) status_cmd "${1:-}";;
+  verify-runtime) verify_runtime_cmd "${1:-}";;
+  security-check|doctor) security_check;;
+  gate-check) installed_helpers_ok || die 'Installierte Helfer nicht vertrauenswürdig'; "${SUDO[@]}" python3 "$SAFEBOX_LIBEXEC/security_gate.py" check;;
+  verify-debian-iso) verify_debian_iso "$@";;
+  verify-iso-hash) verify_iso_hash_only "$@";;
+  create-base|seal-base|start|hardware-test|cleanup|cleanup-sessions|setup-network)
+    acquire_lock
+    case "$cmd" in
+      create-base) create_base "$@";;
+      seal-base) seal_base;;
+      start) start_vm "$@";;
+      hardware-test)
+        [[ $# -eq 0 ]] || die 'hardware-test akzeptiert keine Argumente'
+        installed_helpers_ok || die 'Runtime-Helfer und XML-Template müssen root-owned installiert sein'
+        assert_no_running
+        "${SUDO[@]}" python3 "$SAFEBOX_LIBEXEC/hardware-acceptance.py";;
+      cleanup|cleanup-sessions) cleanup_cmd;;
+      setup-network) die 'RC5 verbietet das Runtime-Netz. Netzwerk nur während create-base für die OS-Installation.';;
+    esac
+    ;;
+  *) usage; exit 2;;
+esac

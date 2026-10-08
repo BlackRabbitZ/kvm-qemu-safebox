@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck libxml2-utils libvirt-clients gnupg
+
+      - name: Validate version and pinned GPG signer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SIGNER_FINGERPRINT: ${{ vars.RELEASE_SIGNER_FINGERPRINT }}
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_REF_NAME" = "v$(cat VERSION)"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          test -n "$RELEASE_SIGNER_FINGERPRINT"
+          gh api users/BlackRabbitZ/gpg_keys --paginate --jq '.[].raw_key' > /tmp/blackrabbitz-release-keys.asc
+          test -s /tmp/blackrabbitz-release-keys.asc
+          gpg --batch --import /tmp/blackrabbitz-release-keys.asc
+          RELEASE_SIGNER_FINGERPRINT="$RELEASE_SIGNER_FINGERPRINT" bash ./tools/verify-signed-tag.sh "$GITHUB_REF_NAME"
+
+      - name: ShellCheck
+        run: shellcheck safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh
+
+      - name: Full release checks
+        run: make release-check
+
+      - name: Build and sign release artifacts
+        env:
+          RELEASE_SIGNER_FINGERPRINT: ${{ vars.RELEASE_SIGNER_FINGERPRINT }}
+          RELEASE_GPG_PRIVATE_KEY_B64: ${{ secrets.RELEASE_GPG_PRIVATE_KEY_B64 }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$RELEASE_GPG_PRIVATE_KEY_B64"
+          echo "$RELEASE_GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --import
+          test "$(gpg --with-colons --list-secret-keys "$RELEASE_SIGNER_FINGERPRINT" | awk -F: '$1=="fpr" {print toupper($10); exit}')" = "${RELEASE_SIGNER_FINGERPRINT^^}"
+          SAFEBOX_SKIP_RELEASE_CHECK=1 bash ./tools/build-release.sh --output ./dist --sign "$RELEASE_SIGNER_FINGERPRINT"
+          SAFEBOX_SIGNING_FINGERPRINT="$RELEASE_SIGNER_FINGERPRINT" bash ./tools/verify-release.sh ./dist "$(cat VERSION)"
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            dist/kvm-qemu-safebox-*.zip \
+            dist/kvm-qemu-safebox-*.tar.gz \
+            dist/kvm-qemu-safebox-*.spdx.json \
+            dist/kvm-qemu-safebox-*.sha256 \
+            dist/kvm-qemu-safebox-*.asc \
+            --draft \
+            --title "KVM/QEMU SafeBox $GITHUB_REF_NAME" \
+            --notes-file release/RELEASE_NOTES.md

@@ -1,0 +1,13 @@
+[Unit]
+Description=KVM-QEMU-SafeBox fail-closed firewall
+After=network-pre.target
+Before=libvirtd.service virtqemud.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/safebox/apply-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

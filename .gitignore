@@ -1,0 +1,11 @@
+*.qcow2
+*.img
+*.iso
+*.log
+*.tmp
+.env
+.DS_Store
+dist/
+*.asc
+*.spdx.json
+*.sha256
