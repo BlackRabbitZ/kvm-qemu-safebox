@@ -8,7 +8,7 @@ base="kvm-qemu-safebox-$VERSION"
 SAFEBOX_SKIP_RELEASE_CHECK=1 bash "$ROOT/tools/build-release.sh" --output "$T" >/dev/null
 for f in "$base.zip" "$base.tar.gz" "$base.spdx.json" "$base.sha256"; do [[ -s "$T/$f" ]] || { echo "[FAIL] Release-Artefakt fehlt: $f" >&2; exit 1; }; done
 (cd "$T" && sha256sum -c "$base.sha256" >/dev/null)
-if SAFEBOX_SIGNING_FINGERPRINT= bash "$ROOT/tools/verify-release.sh" "$T" "$VERSION" >/dev/null 2>&1; then echo "[FAIL] Unsiginiertes Archiv wurde als signiertes Release akzeptiert" >&2; exit 1; fi
+if SAFEBOX_SIGNING_FINGERPRINT='' bash "$ROOT/tools/verify-release.sh" "$T" "$VERSION" >/dev/null 2>&1; then echo "[FAIL] Unsiginiertes Archiv wurde als signiertes Release akzeptiert" >&2; exit 1; fi
 
 T2="$(mktemp -d)"
 trap 'rm -rf "$T" "$T2"' EXIT

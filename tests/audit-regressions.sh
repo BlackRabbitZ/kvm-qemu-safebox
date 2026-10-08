@@ -132,7 +132,7 @@ set -e
 pass 'Kill-Service: unbekannter libvirt-Zustand != Erfolg; verwaistes QEMU != Erfolg'
 
 # Supply-chain verifier refuses unsigned artefacts even when the SHA list matches.
-if SAFEBOX_SIGNING_FINGERPRINT= bash "$ROOT/tools/verify-release.sh" "$T" >/dev/null 2>&1; then fail 'Unsigned Release akzeptiert'; fi
+if SAFEBOX_SIGNING_FINGERPRINT='' bash "$ROOT/tools/verify-release.sh" "$T" >/dev/null 2>&1; then fail 'Unsigned Release akzeptiert'; fi
 pass 'Unsigned Release wird nicht als authentifiziert ausgegeben'
 
 echo '[PASS] Neue Regressionen aus dem Sicherheits-Audit vollständig bestanden.'

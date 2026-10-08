@@ -13,14 +13,24 @@ SAFEBOX_QEMU_MIN_NETWORK_VERSION="10.0.14"
 SAFEBOX_QEMU_BLOCK_11_BELOW="11.1.2"
 EOF2
 make_helper(){ local name=$1 body=$2; printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n%s\n' "$body" >"$LIB/$name"; chmod 0755 "$LIB/$name"; }
+# shellcheck disable=SC2016
+# The next mock-helper bodies are literal shell source and must expand only in the child process.
 make_helper runtime-verify.sh 'exit "${MOCK_RUNTIME_RC:-0}"'
+# shellcheck disable=SC2016
 make_helper firewall-verify.sh 'exit "${MOCK_FIREWALL_RC:-0}"'
+# shellcheck disable=SC2016
 make_helper nwfilter-verify.sh 'exit "${MOCK_NWFILTER_RC:-0}"'
+# shellcheck disable=SC2016
 make_helper qemu-security-check.sh 'exit "${MOCK_QEMU_RC:-0}"'
+# shellcheck disable=SC2016
 make_helper storage-verify.sh 'exit "${MOCK_STORAGE_RC:-0}"'
+# shellcheck disable=SC2016
 make_helper domain-pid.sh 'if [[ "${MOCK_PID_RC:-1}" == 0 ]]; then echo 999999; exit 0; fi; exit 1'
+# shellcheck disable=SC2016
 make_helper kill-domain.sh 'printf "%s\n" "$1" >> "${SAFEBOX_TEST_KILL_MARKER:?}"; exit 0'
+# shellcheck disable=SC2016
 make_helper sample-verify.sh 'exit "${MOCK_SAMPLE_RC:-0}"'
+# shellcheck disable=SC2016
 make_helper proc-absence.py 'exit "${MOCK_PROC_RC:-0}"'
 cat >"$T/virsh" <<'EOFV'
 #!/usr/bin/env bash

@@ -596,7 +596,13 @@ status_cmd(){
   load_domain_profile "$d"
   mode="$(domain_mode "$d")"; state="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" domstate "$d" 2>/dev/null || echo unbekannt)"; unit="safebox-watch-${d}.service"; disk="$(domain_disk "$d")"
   if "${SUDO[@]}" systemctl is-active --quiet "$unit"; then wd=ACTIVE; fi
-  if [[ "$mode" == offline || "$mode" == malware ]]; then fw='OFFLINE'; else if "${SUDO[@]}" /usr/bin/bash "$SAFEBOX_LIBEXEC/firewall-verify.sh" >/dev/null 2>&1; then fw=VERIFIED; else fw=FAIL; fi; fi
+  if [[ "$mode" == offline || "$mode" == malware ]]; then
+    fw='OFFLINE'
+  elif "${SUDO[@]}" /usr/bin/bash "$SAFEBOX_LIBEXEC/firewall-verify.sh" >/dev/null 2>&1; then
+    fw=VERIFIED
+  else
+    fw=FAIL
+  fi
   if "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/runtime-verify.sh" "$d" "$mode" "$disk" "$( [[ "$mode" == malware ]] && printf '%s.sample.iso' "$disk" || true )" >/dev/null 2>&1; then rt=PASS; fi
   if [[ "$mode" != installer ]] && "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/storage-verify.sh" "$d" "$mode" "$disk" >/dev/null 2>&1; then storage=PASS; fi
   pid="$(SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/domain-pid.sh" "$d" 2>/dev/null || echo '?')"
@@ -630,7 +636,7 @@ security_check(){
   fi
   local running d
   running="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" list --name)" || { echo '[FAIL] Laufende Domains: libvirt nicht erreichbar'; fail=1; running=''; }
-  while IFS= read -r d; do
+  while IFS='' read -r d; do
     [[ "$d" == safebox-* ]] || continue
     if verify_runtime_cmd "$d" >/dev/null 2>&1; then
       echo "[PASS] Laufende Domain $d attestiert"
@@ -662,7 +668,7 @@ cleanup_cmd(){
     "${SUDO[@]}" find "$SAFEBOX_RUNTIME_DIR/identities" -maxdepth 1 -type f -name 'safebox-*.json' -delete
   fi
   if "${SUDO[@]}" test -d "$SAFEBOX_SESSIONS_DIR"; then
-    while IFS= read -r -d '' f; do
+    while IFS='' read -r -d '' f; do
       "${SUDO[@]}" rm -f -- "$f" "$f.meta.json" "$f.sample.iso" "$f.sample.iso.sha256"; count=$((count+1))
     done < <("${SUDO[@]}" find "$SAFEBOX_SESSIONS_DIR" -maxdepth 1 -type f \( -name 'safebox-disposable-*.qcow2' -o -name 'safebox-offline-*.qcow2' \) -print0)
     "${SUDO[@]}" find "$SAFEBOX_SESSIONS_DIR" -maxdepth 1 -type f -name '*.meta.json' -delete

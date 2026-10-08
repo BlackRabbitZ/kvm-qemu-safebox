@@ -27,7 +27,7 @@ iface="$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf '%f\n' | grep -v '^
 if nmcli -t -f NAME con show | grep -Fxq safebox-static; then
   nmcli con delete safebox-static >/dev/null
 fi
-while IFS= read -r con; do
+while IFS='' read -r con; do
   [[ -z "$con" ]] && continue
   nmcli con modify "$con" connection.autoconnect no 2>/dev/null || true
 done < <(nmcli -t -f NAME,DEVICE con show | awk -F: -v dev="$iface" '$2==dev {print $1}')

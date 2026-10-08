@@ -7,7 +7,7 @@ allowed='SAFEBOX_RAM_MIB SAFEBOX_VCPUS SAFEBOX_MEM_HARD_MIB SAFEBOX_IOTHREADS SA
 for profile in hardened balanced performance; do
   file="$ROOT/profiles/$profile.conf"
   [[ -f "$file" && ! -L "$file" ]] || { echo "[FAIL] Profil fehlt: $profile" >&2; exit 1; }
-  while IFS= read -r line; do
+  while IFS='' read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
     key=${line%%=*}
     grep -qw "$key" <<<"$allowed" || { echo "[FAIL] $profile darf Sicherheitsvariable $key nicht verändern" >&2; exit 1; }
