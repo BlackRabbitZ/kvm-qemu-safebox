@@ -17,6 +17,6 @@ jobs:
       - name: Bash syntax
         run: bash -n safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh
       - name: ShellCheck
-        run: shellcheck safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh
+        run: make lint
       - name: Policy tests
         run: make release-check

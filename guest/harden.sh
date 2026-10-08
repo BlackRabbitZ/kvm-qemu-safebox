@@ -10,12 +10,16 @@ apt-get purge -y qemu-guest-agent spice-vdagent openssh-server avahi-daemon cups
 systemctl enable --now apparmor.service nftables.service unattended-upgrades.service NetworkManager.service
 for svc in ssh.service ssh.socket avahi-daemon.service avahi-daemon.socket cups.service cups.socket; do systemctl disable --now "$svc" 2>/dev/null || true; done
 for pkg in qemu-guest-agent spice-vdagent openssh-server avahi-daemon cups-daemon; do
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   if dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null | grep -q '^ii '; then
     echo "FEHLER: Verbotenes Gast-Paket ist noch installiert: $pkg" >&2
     exit 1
   fi
 done
 for pkg in apparmor nftables network-manager; do
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null | grep -q '^ii ' || { echo "FEHLER: Pflichtpaket fehlt: $pkg" >&2; exit 1; }
 done
 install -m 0644 "$ROOT/guest/nftables.conf" /etc/nftables.conf

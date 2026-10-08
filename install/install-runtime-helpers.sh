@@ -27,6 +27,8 @@ virsh -c qemu:///system nwfilter-define /etc/safebox/safebox-install-filter.xml 
 tmp="$(mktemp -p /run/safebox/tmp nwfilter.XXXXXX.xml)"
 trap 'rm -f -- "$tmp"' EXIT
 virsh -c qemu:///system nwfilter-dumpxml safebox-runtime-filter >"$tmp"
+# Literal embedded program/test syntax: $ belongs to that program, not Bash.
+# shellcheck disable=SC2016
 python3 "$ROOT/tools/nwfilter-canon.py" <"$tmp" | awk '{print $1 "  safebox-runtime-filter"}' >/etc/safebox/nwfilter.sha256
 chown root:root /etc/safebox/nwfilter.sha256
 chmod 0400 /etc/safebox/nwfilter.sha256

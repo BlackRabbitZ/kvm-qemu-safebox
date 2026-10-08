@@ -1,4 +1,4 @@
-.PHONY: check release-check sbom release
+.PHONY: check release-check sbom release lint
 check:
 	bash -n safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh
 	python3 -m py_compile tools/*.py
@@ -27,3 +27,8 @@ sbom:
 
 release:
 	bash tools/build-release.sh
+
+# Requires ShellCheck: install it locally before pushing changes to CI.
+lint:
+	@command -v shellcheck >/dev/null || { echo "[FAIL] shellcheck is required (apt install shellcheck)" >&2; exit 127; }
+	shellcheck safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh

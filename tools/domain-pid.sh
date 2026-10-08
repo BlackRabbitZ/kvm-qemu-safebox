@@ -21,6 +21,8 @@ validate_pid_identity(){
   [[ "$uuid" =~ ^[0-9a-f-]{36}$ ]] || return 1
   "${SUDO[@]}" test -r "/proc/$pid/stat" || return 1
 
+  # awk script uses its own $n fields, which must remain literal.
+  # shellcheck disable=SC2016
   start_before="$("${SUDO[@]}" awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
   [[ "$start_before" =~ ^[0-9]+$ ]] || return 1
   [[ -z "$expected_start" || "$start_before" == "$expected_start" ]] || return 1
@@ -43,6 +45,8 @@ validate_pid_identity(){
   done
   (( found_uuid == 1 )) || return 1
 
+  # awk script uses its own $n fields, which must remain literal.
+  # shellcheck disable=SC2016
   start_after="$("${SUDO[@]}" awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
   [[ "$start_before" == "$start_after" ]] || return 1
   printf '%s\n' "$pid"

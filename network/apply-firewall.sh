@@ -9,6 +9,8 @@ command -v python3 >/dev/null || { echo "FEHLER: python3 fehlt" >&2; exit 1; }
 
 addr_dump="$(ip -4 -o addr show)" || { echo 'FEHLER: Host-Adressinventar nicht verfügbar' >&2; exit 1; }
 route_dump="$(ip -4 -o route show table all)" || { echo 'FEHLER: Policy-Routing nicht abfragbar' >&2; exit 1; }
+# Literal embedded program/test syntax: $ belongs to that program, not Bash.
+# shellcheck disable=SC2016
 mapfile -t host_ips < <(printf '%s\n' "$addr_dump" | awk '{split($4,a,"/"); print a[1]}' | sort -u)
 [[ ${#host_ips[@]} -gt 0 ]] || host_ips=(127.0.0.1)
 host_list="$(IFS=', '; echo "${host_ips[*]}")"

@@ -10,6 +10,8 @@ for f in "$DIR/$base.zip" "$DIR/$base.tar.gz" "$DIR/$base.spdx.json" "$sums"; do
   [[ -s "$f" && -s "$f.asc" ]] || { echo "[FAIL] Artefakt/Signatur fehlt: $f" >&2; exit 1; }
   # Validate VALIDSIG, not merely that GPG accepts some imported public key.
   result="$(gpg --batch --status-fd 1 --verify "$f.asc" "$f" 2>/dev/null)" || exit 1
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   actual="$(awk '/^\[GNUPG:\] VALIDSIG / {print toupper($3); exit}' <<<"$result")"
   [[ "$actual" == "${EXPECTED^^}" ]] || { echo "[FAIL] Signer $actual statt $EXPECTED" >&2; exit 1; }
 done

@@ -4,7 +4,11 @@ umask 077
 PASS=0; FAIL=0
 ok(){ echo "[PASS] $*"; PASS=$((PASS+1)); }
 bad(){ echo "[FAIL] $*" >&2; FAIL=$((FAIL+1)); }
+# Literal embedded program/test syntax: $ belongs to that program, not Bash.
+# shellcheck disable=SC2016
 IP="$(ip -4 -o addr show scope global | awk '{split($4,a,"/"); print a[1]; exit}')"
+# Literal embedded program/test syntax: $ belongs to that program, not Bash.
+# shellcheck disable=SC2016
 GW="$(ip -4 route show default | awk '{print $3; exit}')"
 if [[ "$IP" == 10.77.0.100 ]]; then ok "Statische IP: $IP"; else bad "Erwartet 10.77.0.100, gefunden ${IP:-keine}"; fi
 if [[ "$GW" == 10.77.0.1 ]]; then ok "Gateway: $GW"; else bad "Erwartet 10.77.0.1, gefunden ${GW:-keines}"; fi

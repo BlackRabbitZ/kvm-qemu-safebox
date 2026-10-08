@@ -19,11 +19,15 @@ grep -Fq 'set_qemu_owner "$disk"' "$ROOT/safebox" || fail 'Readonly/ACL-Owner de
 grep -Fq '"${SUDO[@]}" test -d "$SAFEBOX_SESSIONS_DIR"' "$ROOT/safebox" || fail 'Cleanup-Verzeichnisprüfung ist nicht privilegiert'
 pass 'Storage-Rechtefehler ist als Verhalten/Quellpfad abgesichert'
 
-! grep -Fq '/tmp/safebox-nwfilter.xml' "$ROOT/install/install-runtime-helpers.sh" || fail 'Vorhersehbare root-/tmp-Datei wieder vorhanden'
+if grep -Fq '/tmp/safebox-nwfilter.xml' "$ROOT/install/install-runtime-helpers.sh"; then
+  fail 'Vorhersehbare root-/tmp-Datei wieder vorhanden'
+fi
 grep -Fq 'mktemp -p /run/safebox/tmp' "$ROOT/install/install-runtime-helpers.sh" || fail 'Sicheres root-owned mktemp fehlt'
 pass 'Root-Tempdateien verwenden geschützten Runtime-Pfad'
 
-! grep -Eq 'usermod .*libvirt|gpasswd .* -a .*libvirt' "$ROOT/install/install-host.sh" || fail 'Installer vergibt wieder dauerhafte libvirt-Gruppenrechte'
+if grep -Eq 'usermod .*libvirt|gpasswd .* -a .*libvirt' "$ROOT/install/install-host.sh"; then
+  fail 'Installer vergibt wieder dauerhafte libvirt-Gruppenrechte'
+fi
 pass 'Installer vergibt keine libvirt-Gruppenrechte'
 
 grep -Fq '/var/lib/dpkg/status' "$ROOT/tools/verify-base-guest.sh" || fail 'Offline-Gastprüfung vertraut weiterhin nur dem Marker'
@@ -35,7 +39,11 @@ grep -Fq "<filter name='safebox-runtime-filter'" "$ROOT/network/safebox-runtime-
 pass 'nwfilter ist projekt-owned statt distro-clean-traffic'
 
 # Root runtime must use installed immutable helpers, not sudo on mutable checkout code.
-! grep -Fq 'sudo bash "$ROOT/network/apply-firewall.sh"' "$ROOT/safebox" || fail 'Mutable Repo-Firewall wird wieder als root ausgeführt'
+# Check the exact, literal source text. This must not expand the variable in Bash.
+# shellcheck disable=SC2016
+if grep -Fq 'sudo bash "$ROOT/network/apply-firewall.sh"' "$ROOT/safebox"; then
+  fail 'Mutable Repo-Firewall wird wieder als root ausgeführt'
+fi
 # Grund: Wörtlicher Such-/Testtext, Expansion wäre hier falsch.
 # shellcheck disable=SC2016
 grep -Fq '$SAFEBOX_LIBEXEC/apply-firewall.sh' "$ROOT/safebox" || fail 'Installierter root-owned Firewall-Helper wird nicht genutzt'

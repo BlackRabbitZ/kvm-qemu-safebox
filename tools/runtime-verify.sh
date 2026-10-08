@@ -142,12 +142,16 @@ pid="$(SAFEBOX_CONFIG_FILE="$CONFIG" "$PID_HELPER" "$DOMAIN" 2>/dev/null || true
 if [[ "$pid" =~ ^[0-9]+$ ]] && "${SUDO[@]}" test -r "/proc/$pid/status"; then
   status="$("${SUDO[@]}" cat "/proc/$pid/status")"
   expected_uid="$(id -u "${SAFEBOX_EXPECTED_QEMU_USER:-libvirt-qemu}" 2>/dev/null || true)"
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   uid_line="$(awk '/^Uid:/{print $2, $3, $4, $5}' <<<"$status")"
   if [[ "$expected_uid" =~ ^[0-9]+$ ]] && awk -v u="$expected_uid" '{for(i=1;i<=NF;i++) if($i!=u) exit 1}' <<<"$uid_line"; then ok 'QEMU läuft als erwarteter Dienstbenutzer'; else bad 'QEMU UID weicht vom erwarteten Dienstbenutzer ab'; fi
   for cap in CapEff CapPrm CapAmb; do
     v="$(awk -v k="$cap:" '$1==k{print $2}' <<<"$status")"
     if [[ "${v:-}" == 0000000000000000 ]]; then ok "$cap = 0"; else bad "$cap nicht leer"; fi
   done
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   if [[ "$(awk '/^Seccomp:/{print $2}' <<<"$status")" == 2 ]]; then ok 'Seccomp Filter aktiv'; else bad 'Seccomp nicht bestätigt'; fi
   aa="$("${SUDO[@]}" cat "/proc/$pid/attr/current" 2>/dev/null || true)"
   if [[ "$aa" == *libvirt* && "$aa" == *'(enforce)'* ]]; then ok 'AppArmor enforce aktiv'; else bad "AppArmor nicht im Enforce-Modus: ${aa:-unbekannt}"; fi

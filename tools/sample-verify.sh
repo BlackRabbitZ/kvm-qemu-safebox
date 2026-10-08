@@ -17,6 +17,8 @@ hash_file="$iso.sha256"
 [[ ! -L "$hash_file" && -f "$hash_file" && "$(stat -c %u "$hash_file")" == 0 && "$(stat -c %a "$hash_file")" == 400 ]] || exit 1
 expected="$(cat "$hash_file")"
 [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || exit 1
+# Literal embedded program/test syntax: $ belongs to that program, not Bash.
+# shellcheck disable=SC2016
 actual="$(sha256sum "$iso" | awk '{print $1}')"
 [[ "$actual" == "$expected" ]] || exit 1
 printf '[PASS] Schreibgeschützte Sample-ISO ist an SHA-256 gebunden.\n'

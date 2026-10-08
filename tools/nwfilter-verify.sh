@@ -29,6 +29,8 @@ verify_one "$SAFEBOX_INSTALL_NWFILTER" "$SAFEBOX_INSTALL_NWFILTER_XML"
 
 "${SUDO[@]}" test -r "$SAFEBOX_NWFILTER_BASELINE" || { echo '[FAIL] nwfilter-Baseline fehlt.' >&2; exit 1; }
 actual="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" nwfilter-dumpxml "$SAFEBOX_NWFILTER" | hash_xml)"
+# AWK code must not undergo shell parameter expansion; the $1 belongs to awk.
+# shellcheck disable=SC2016
 expected="$("${SUDO[@]}" awk '{print $1; exit}' "$SAFEBOX_NWFILTER_BASELINE")"
 [[ "$actual" == "$expected" ]] || { echo '[FAIL] Runtime-nwfilter weicht von der installierten Baseline ab.' >&2; exit 1; }
 echo '[PASS] Runtime- und Installer-nwfilter entsprechen exakt den root-owned Projektdefinitionen.'

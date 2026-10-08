@@ -98,7 +98,9 @@ broadcast 192.168.99.255 dev wg0 table local proto kernel scope link src 192.168
 EOF
 python3 "$ROOT/tools/local-routes.py" <"$T/routes.txt" >"$T/routelist"
 grep -Fxq '192.168.99.0/24' "$T/routelist" || fail 'Policy-Routing-Präfix fehlt'
-! grep -q '0.0.0.0/0' "$T/routelist" || fail 'Internet-Default-Route versehentlich gesperrt'
+if grep -q '0.0.0.0/0' "$T/routelist"; then
+  fail 'Internet-Default-Route versehentlich gesperrt'
+fi
 pass 'VPN/Policy-Tables und überlappende lokale Routen sauber zusammengeführt'
 
 mkdir "$T/bin" "$T/libexec" "$T/run"

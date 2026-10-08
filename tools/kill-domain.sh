@@ -17,6 +17,8 @@ if ! virsh -c "$SAFEBOX_CONNECT_URI" list --all --name >/dev/null 2>&1; then
   # Safe fallback: signal only a PID positively validated against UUID and starttime.
   pid="$(SAFEBOX_CONFIG_FILE="$CONFIG" "$LIBEXEC/domain-pid.sh" "$DOMAIN" 2>/dev/null || true)"
   if [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )); then
+    # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+    # shellcheck disable=SC2016
     start="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
     if [[ "$start" =~ ^[0-9]+$ ]]; then
       kill -TERM "$pid" 2>/dev/null || true
@@ -25,6 +27,8 @@ if ! virsh -c "$SAFEBOX_CONNECT_URI" list --all --name >/dev/null 2>&1; then
         sleep 0.2
       done
       # Do not signal a reused PID.
+      # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+      # shellcheck disable=SC2016
       now="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
       if [[ "$now" == "$start" ]]; then kill -KILL "$pid" 2>/dev/null || true; fi
     fi
@@ -40,6 +44,8 @@ fi
 # Still running? Try strictly validated process fallback, never use an unvalidated PID.
 pid="$(SAFEBOX_CONFIG_FILE="$CONFIG" "$LIBEXEC/domain-pid.sh" "$DOMAIN" 2>/dev/null || true)"
 if [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )); then
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   start="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
   if [[ "$start" =~ ^[0-9]+$ ]]; then
     kill -TERM "$pid" 2>/dev/null || true
@@ -47,6 +53,8 @@ if [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 1 )); then
       if ! kill -0 "$pid" 2>/dev/null; then break; fi
       sleep 0.2
     done
+    # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+    # shellcheck disable=SC2016
     now="$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
     if [[ "$now" == "$start" ]]; then kill -KILL "$pid" 2>/dev/null || true; fi
   fi

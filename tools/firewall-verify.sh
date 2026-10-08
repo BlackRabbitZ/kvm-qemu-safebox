@@ -30,6 +30,8 @@ b=json.dumps(j,sort_keys=True,separators=(',',':')).encode()
 print(hashlib.sha256(b).hexdigest())
 PYHASH
 )"
+# awk script uses its own $n fields, which must remain literal.
+# shellcheck disable=SC2016
 expected_hash="$("${SUDO[@]}" awk '{print $1; exit}' "$baseline")"
 [[ "$actual_hash" == "$expected_hash" ]] || { echo '[FAIL] Komplette nftables-Policy weicht von der installierten Baseline ab.' >&2; exit 1; }
 
@@ -70,6 +72,8 @@ rm -f "$live_json.expected" "$live_json.got"
 
 addr_dump="$(ip -4 -o addr show)" || { echo '[FAIL] Host-Adressen nicht ermittelbar' >&2; exit 1; }
 route_dump="$(ip -4 -o route show table all)" || { echo '[FAIL] Policy-Routen nicht ermittelbar' >&2; exit 1; }
+# Literal embedded program/test syntax: $ belongs to that program, not Bash.
+# shellcheck disable=SC2016
 mapfile -t expected_hosts < <(printf '%s\n' "$addr_dump" | awk '{split($4,a,"/"); print a[1]}' | sort -u)
 mapfile -t got_hosts < <(extract_ipv4 host_v4 | sed 's#/32$##')
 [[ "$(printf '%s\n' "${expected_hosts[@]}" | sort -u)" == "$(printf '%s\n' "${got_hosts[@]}" | sort -u)" ]] || { echo '[FAIL] host_v4 ist nicht exakt aktuell.' >&2; exit 1; }

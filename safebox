@@ -140,6 +140,8 @@ record_domain_identity(){
   pid="$(SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/domain-pid.sh" "$d")" || die 'QEMU-PID für Runtime-Identität nicht ermittelbar'
   uuid="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" domuuid "$d" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
   [[ "$uuid" =~ ^[0-9a-f-]{36}$ ]] || die 'Domain-UUID für Runtime-Identität nicht ermittelbar'
+  # awk script uses its own $n fields, which must remain literal.
+  # shellcheck disable=SC2016
   start="$("${SUDO[@]}" awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true)"
   exe="$("${SUDO[@]}" readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
   [[ "$start" =~ ^[0-9]+$ && "$exe" == */qemu-system-x86_64 ]] || die 'QEMU-Prozessidentität nicht stabil'
@@ -203,11 +205,15 @@ disk_size_bytes(){ numfmt --from=iec "$SAFEBOX_DISK_SIZE" 2>/dev/null || die "Un
 require_storage_headroom(){
   local disk=${1:-} avail required reserve target allocated=0
   prepare_storage
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   avail="$("${SUDO[@]}" df -PB1 "$SAFEBOX_STORAGE" | awk 'NR==2 {print $4}')"
   [[ "$avail" =~ ^[0-9]+$ ]] || die 'Freier Speicher konnte nicht ermittelt werden'
   reserve="$(bytes_for_gib "$SAFEBOX_MIN_FREE_GIB")"
   target="$(bytes_for_gib "$SAFEBOX_OVERLAY_MAX_GIB")"
   if [[ -n "$disk" ]] && "${SUDO[@]}" test -f "$disk"; then
+    # awk script uses its own $n fields, which must remain literal.
+    # shellcheck disable=SC2016
     allocated="$("${SUDO[@]}" stat -c '%b %B' "$disk" | awk '{print $1*$2}')"
   fi
   (( allocated < target )) || required=$reserve
@@ -228,6 +234,8 @@ verify_debian_iso(){
   name="$(basename -- "$iso")"
   expected="$(awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}' "$sums")"
   [[ "$expected" =~ ^[A-Fa-f0-9]{64}$ ]] || die "ISO $name fehlt in SHA256SUMS"
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   got="$(sha256sum "$iso" | awk '{print $1}')"
   [[ "${got,,}" == "${expected,,}" ]] || die "ISO SHA256 falsch: $got"
   echo '[PASS] Debian-Signatur und ISO-SHA-256 sind gültig.'
@@ -236,6 +244,8 @@ verify_debian_iso(){
 verify_iso_hash_only(){
   local iso=${1:-} expected=${2:-} got
   [[ -f "$iso" && "$expected" =~ ^[A-Fa-f0-9]{64}$ ]] || die 'verify-iso-hash ISO SHA256'
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   got="$(sha256sum "$iso" | awk '{print $1}')"
   [[ "${got,,}" == "${expected,,}" ]] || die "ISO SHA256 falsch: $got"
   echo '[PASS] ISO SHA-256 stimmt (nicht signaturauthentifiziert).'
@@ -308,6 +318,8 @@ remove_install_net(){
 
 create_base_metadata(){
   local digest virtual id tmp
+  # awk script uses its own $n fields, which must remain literal.
+  # shellcheck disable=SC2016
   digest="$("${SUDO[@]}" awk '{print $1; exit}' "$SAFEBOX_BASE_HASH")"
   virtual="$("${SUDO[@]}" qemu-img info --output=json "$SAFEBOX_BASE_IMAGE" | jq -r '."virtual-size"')"
   id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
@@ -332,6 +344,8 @@ verify_base(){
   [[ "$SAFEBOX_VERIFY_BASE_HASH" == 1 ]] || die 'Basis-Hashprüfung darf nicht deaktiviert werden'
   "${SUDO[@]}" sha256sum -c "$SAFEBOX_BASE_HASH" >/dev/null || die 'Basis-Hash falsch'
   local digest meta_digest meta_path meta_version
+  # awk script uses its own $n fields, which must remain literal.
+  # shellcheck disable=SC2016
   digest="$("${SUDO[@]}" awk '{print $1; exit}' "$SAFEBOX_BASE_HASH")"
   meta_digest="$("${SUDO[@]}" jq -r .sha256 "$SAFEBOX_BASE_META")"
   meta_path="$("${SUDO[@]}" jq -r .base_path "$SAFEBOX_BASE_META")"
@@ -614,6 +628,8 @@ status_cmd(){
   if "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/runtime-verify.sh" "$d" "$mode" "$disk" "$sample_iso" >/dev/null 2>&1; then rt=PASS; fi
   if [[ "$mode" != installer ]] && "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/storage-verify.sh" "$d" "$mode" "$disk" >/dev/null 2>&1; then storage=PASS; fi
   pid="$(SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/domain-pid.sh" "$d" 2>/dev/null || echo '?')"
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   alloc="$("${SUDO[@]}" stat -c '%b %B' "$disk" 2>/dev/null | awk '{printf "%.2f", ($1*$2)/1024/1024/1024}' || echo '?')"
   free="$("${SUDO[@]}" df -BG --output=avail "$SAFEBOX_STORAGE" 2>/dev/null | tail -n1 | tr -d ' G' || echo '?')"
   printf 'Domain:       %s\nState:        %s\nMode:         %s\nProfile:      %s\nQEMU PID:     %s\nWatchdog:     %s\nFirewall:     %s\nRuntime:      %s\nStorage:      %s\nOverlay:      %s GiB allocated\nHost free:    %s GiB\nCPU cap:      %s%% of %s vCPU capacity\nDisk I/O:     %s B/s, %s IOPS\n' "$d" "$state" "$mode" "$SAFEBOX_PROFILE" "$pid" "$wd" "$fw" "$rt" "$storage" "$alloc" "$free" "$SAFEBOX_CPU_MAX_PERCENT" "$SAFEBOX_VCPUS" "$SAFEBOX_DISK_TOTAL_BYTES_SEC" "$SAFEBOX_DISK_TOTAL_IOPS_SEC"
@@ -639,6 +655,8 @@ security_check(){
   if [[ -d "$SAFEBOX_STORAGE" ]]; then
     if "${SUDO[@]}" python3 "$ROOT/tools/storage-crypto-check.py" "$SAFEBOX_STORAGE"; then echo '[PASS] Storage auf LUKS2'; else echo '[FAIL] Storage nicht sicher auf LUKS2'; fail=1; fi
     local avail min
+    # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+    # shellcheck disable=SC2016
     avail="$("${SUDO[@]}" df -PB1 "$SAFEBOX_STORAGE" | awk 'NR==2 {print $4}')"; min="$(bytes_for_gib "$SAFEBOX_MIN_FREE_GIB")"
     if [[ "$avail" =~ ^[0-9]+$ ]] && (( avail >= min )); then echo '[PASS] Storage-Reserve'; else echo '[FAIL] Storage-Reserve'; fail=1; fi
   fi
@@ -669,6 +687,8 @@ cleanup_cmd(){
     [[ -n "$unit" ]] || continue
     "${SUDO[@]}" systemctl stop "$unit" >/dev/null 2>&1 || true
     "${SUDO[@]}" systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+  # Literal embedded program/test syntax: $ belongs to that program, not Bash.
+  # shellcheck disable=SC2016
   done < <("${SUDO[@]}" systemctl list-units --all --plain --no-legend 'safebox-watch-*.service' 2>/dev/null | awk '{print $1}')
   "${SUDO[@]}" systemctl reset-failed 'safebox-kill@*.service' >/dev/null 2>&1 || true
   assert_no_running  # Recheck after service manipulations; never erase uncertain evidence.

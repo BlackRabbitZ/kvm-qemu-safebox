@@ -21,10 +21,14 @@ real_disk="$("${SUDO[@]}" readlink -f "$DISK" 2>/dev/null || true)"
 "${SUDO[@]}" test ! -L "$DISK" || { echo '[FAIL] Overlay darf kein Symlink sein.' >&2; exit 1; }
 
 # Allokierte Host-Blöcke statt Dateilänge prüfen; das funktioniert auch bei laufender QEMU-VM.
+# awk script uses its own $n fields, which must remain literal.
+# shellcheck disable=SC2016
 allocated_bytes="$("${SUDO[@]}" stat -c '%b %B' "$real_disk" | awk '{print $1*$2}')"
 max_bytes=$(( SAFEBOX_OVERLAY_MAX_GIB * 1024 * 1024 * 1024 ))
 (( allocated_bytes <= max_bytes )) || { echo "[FAIL] Overlay überschreitet Host-Limit (${SAFEBOX_OVERLAY_MAX_GIB} GiB)." >&2; exit 1; }
 
+# Literal embedded program/test syntax: $ belongs to that program, not Bash.
+# shellcheck disable=SC2016
 avail_bytes="$("${SUDO[@]}" df -PB1 "$real_storage" | awk 'NR==2 {print $4}')"
 min_bytes=$(( SAFEBOX_RUNTIME_MIN_FREE_GIB * 1024 * 1024 * 1024 ))
 if [[ ! "$avail_bytes" =~ ^[0-9]+$ ]] || (( avail_bytes < min_bytes )); then

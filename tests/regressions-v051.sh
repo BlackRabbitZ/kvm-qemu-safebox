@@ -10,8 +10,12 @@ pass 'SPICE-Abhängigkeit explizit installiert'
 
 grep -Fq 'SAFEBOX_DISK_BUS="sata"' "$ROOT/config/defaults.conf" || fail 'SATA-Hardening fehlt'
 grep -Fq 'SAFEBOX_NET_MODEL="e1000e"' "$ROOT/config/defaults.conf" || fail 'e1000e-Hardening fehlt'
-! grep -Fq "target dev='vda' bus='virtio'" "$ROOT/vm/templates/runtime.xml.in" || fail 'virtio-blk ist wieder aktiv'
-! grep -Fq "model type='virtio'" "$ROOT/vm/templates/runtime.xml.in" || fail 'virtio-net/video ist wieder aktiv'
+if grep -Fq "target dev='vda' bus='virtio'" "$ROOT/vm/templates/runtime.xml.in"; then
+  fail 'virtio-blk ist wieder aktiv'
+fi
+if grep -Fq "model type='virtio'" "$ROOT/vm/templates/runtime.xml.in"; then
+  fail 'virtio-net/video ist wieder aktiv'
+fi
 pass 'Bekannte virtio-net/virtio-blk-Pfade bleiben im Hardened-Default entfernt'
 
 grep -Fq "'(enforce)'" "$ROOT/tools/runtime-verify.sh" || fail 'AppArmor complain/enforce Regression'
@@ -34,7 +38,9 @@ pass 'Watchdog behandelt verschwundene Domain fail-closed'
 grep -Fq 'verify-tag --raw' "$ROOT/tools/verify-signed-tag.sh" || fail 'Lokale Tag-Prüfung ist nicht kryptografisch'
 grep -Fq 'VALIDSIG' "$ROOT/tools/verify-signed-tag.sh" || fail 'Signer-Fingerprint wird nicht geprüft'
 grep -Fq 'RELEASE_SIGNER_FINGERPRINT' "$ROOT/.github/workflows/release.yml" || fail 'GitHub Release-CI pinnt den Signer nicht'
-! grep -Fq "BEGIN (PGP|SSH) SIGNATURE" "$ROOT/.github/workflows/release.yml" || fail 'Release-CI akzeptiert wieder nur Signaturmarker'
+if grep -Fq "BEGIN (PGP|SSH) SIGNATURE" "$ROOT/.github/workflows/release.yml"; then
+  fail 'Release-CI akzeptiert wieder nur Signaturmarker'
+fi
 pass 'Release-Tag benötigt echte kryptografische Verifikation und erlaubten Signer'
 
 grep -Fq 'SOURCE_DATE_EPOCH' "$ROOT/tools/build-release.sh" || fail 'SOURCE_DATE_EPOCH fehlt'
