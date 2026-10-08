@@ -1,3 +1,12 @@
+
+### CI-Korrektur 3 (v0.5.1-rc5, ohne Versionswechsel)
+
+- Ungültige ShellCheck-Direktiven mit Kommentartext nach `--` entfernt (SC1073/SC1072).
+- `SC2015`-Anfälligkeit der Sample-Größenprüfung durch explizite Bedingung ersetzt.
+- PID-/UUID-Argumenteniteration überarbeitet, damit ShellCheck den Schleifenindex als verwendet erkennt (SC2034).
+- Regressionstest gegen ungültige ShellCheck-Direktiven in `make check` aufgenommen.
+- Kein neuer Sicherheitsnachweis für KVM oder unbekannte Malware.
+
 ## v0.5.1-rc5 – Real KVM Test & Security Gate
 
 - Benigner Echt-KVM-Smoke-Test mit eigenem Offline-Overlay (kein Malware-Sample),

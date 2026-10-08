@@ -2,6 +2,7 @@
 check:
 	bash -n safebox install/*.sh host/*.sh network/*.sh guest/*.sh tools/*.sh tests/*.sh
 	python3 -m py_compile tools/*.py
+	bash tests/shellcheck-directives.sh
 	bash tests/static-policy.sh
 	bash tests/network-policy.sh
 	bash tests/render-smoke.sh

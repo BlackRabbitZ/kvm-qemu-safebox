@@ -11,9 +11,11 @@ mkdir "$T/protected"; touch "$T/protected/persistent.qcow2"; chmod 0750 "$T/prot
 if command -v runuser >/dev/null && id nobody >/dev/null 2>&1; then
   if runuser -u nobody -- test -f "$T/protected/persistent.qcow2" 2>/dev/null; then fail 'Testfixture: nobody konnte unerwartet geschützte Datei statten'; fi
 fi
-# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
+# Grund: Wörtlicher Such-/Testtext, Expansion wäre hier falsch.
+# shellcheck disable=SC2016
 grep -Fq 'set_qemu_owner "$disk"' "$ROOT/safebox" || fail 'Readonly/ACL-Owner des Overlays fehlt'
-# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
+# Grund: Wörtlicher Such-/Testtext, Expansion wäre hier falsch.
+# shellcheck disable=SC2016
 grep -Fq '"${SUDO[@]}" test -d "$SAFEBOX_SESSIONS_DIR"' "$ROOT/safebox" || fail 'Cleanup-Verzeichnisprüfung ist nicht privilegiert'
 pass 'Storage-Rechtefehler ist als Verhalten/Quellpfad abgesichert'
 
@@ -34,20 +36,23 @@ pass 'nwfilter ist projekt-owned statt distro-clean-traffic'
 
 # Root runtime must use installed immutable helpers, not sudo on mutable checkout code.
 ! grep -Fq 'sudo bash "$ROOT/network/apply-firewall.sh"' "$ROOT/safebox" || fail 'Mutable Repo-Firewall wird wieder als root ausgeführt'
-# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
+# Grund: Wörtlicher Such-/Testtext, Expansion wäre hier falsch.
+# shellcheck disable=SC2016
 grep -Fq '$SAFEBOX_LIBEXEC/apply-firewall.sh' "$ROOT/safebox" || fail 'Installierter root-owned Firewall-Helper wird nicht genutzt'
 pass 'Root-Runtime nutzt installierte Helper'
 
 # Helper integrity must be checked before domain creation.
 start_block="$(awk '/^start_vm\(\)/,/^detect_domain\(\)/' "$ROOT/safebox")"
 pre="$(grep -n "installed_helpers_ok || die" <<<"$start_block" | head -n1 | cut -d: -f1)"
-# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
+# Grund: Wörtlicher Such-/Testtext, Expansion wäre hier falsch.
+# shellcheck disable=SC2016
 create="$(grep -n 'virsh -c "$SAFEBOX_CONNECT_URI" create' <<<"$start_block" | head -n1 | cut -d: -f1)"
 [[ "$pre" =~ ^[0-9]+$ && "$create" =~ ^[0-9]+$ && "$pre" -lt "$create" ]] || fail 'Helper-Attestation erfolgt nicht vor VM-Start'
 pass 'Helper-Attestation erfolgt vor VM-Start'
 
 grep -Fq 'SAFEBOX_VERIFY_BASE_HASH="1"' "$ROOT/config/defaults.conf" || fail 'Base-Hash ist wieder per Environment abschaltbar'
-# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
+# Grund: Wörtlicher Such-/Testtext, Expansion wäre hier falsch.
+# shellcheck disable=SC2016
 grep -Fq 'verify_overlay "$disk"' "$ROOT/safebox" || fail 'Overlay-Integrität wird vor Start nicht geprüft'
 pass 'Basis-/Overlay-Integrität ist fail-closed'
 

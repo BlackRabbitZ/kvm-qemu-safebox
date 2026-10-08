@@ -33,7 +33,9 @@ validate_pid_identity(){
 
   mapfile -t args < <("${SUDO[@]}" cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' '\n')
   local i
-  for ((i=0; i<${#args[@]}-1; i++)); do
+  for i in "${!args[@]}"; do
+    # Das letzte Argument kann kein Wert zu -uuid sein.
+    [[ "$i" -lt $((${#args[@]} - 1)) ]] || break
     if [[ "${args[$i]}" == -uuid && "${args[$((i+1))],,}" == "$uuid" ]]; then
       found_uuid=1
       break

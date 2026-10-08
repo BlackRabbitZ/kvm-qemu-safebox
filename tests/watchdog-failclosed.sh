@@ -59,7 +59,11 @@ run_case(){
   local marker="$T/$name.kill"
   local rc=0
   rm -f "$marker"
-  local -a env_args=(SAFEBOX_TESTING=1 SAFEBOX_WATCH_MAX_LOOPS=1 SAFEBOX_VIRSH_BIN="$T/virsh" SAFEBOX_SLEEP_BIN=/bin/true SAFEBOX_TEST_KILL_MARKER="$marker" MOCK_VIRSH_SCENARIO="$scenario" MOCK_PID_RC="$pidrc" MOCK_PROC_RC="$([[ "$pidrc" == 0 ]] && echo 1 || echo 0)" SAFEBOX_CONFIG_FILE="$T/config.conf")
+  local mock_proc_rc=0
+  if [[ "$pidrc" == 0 ]]; then
+    mock_proc_rc=1
+  fi
+  local -a env_args=(SAFEBOX_TESTING=1 SAFEBOX_WATCH_MAX_LOOPS=1 SAFEBOX_VIRSH_BIN="$T/virsh" SAFEBOX_SLEEP_BIN=/bin/true SAFEBOX_TEST_KILL_MARKER="$marker" MOCK_VIRSH_SCENARIO="$scenario" MOCK_PID_RC="$pidrc" MOCK_PROC_RC="$mock_proc_rc" SAFEBOX_CONFIG_FILE="$T/config.conf")
   [[ -z "$mock_name" ]] || env_args+=("$mock_name=$mock_value")
   set +e; env "${env_args[@]}" bash "$ROOT/tools/runtime-watch.sh" safebox-offline-test "$mode" /tmp/test.qcow2 >/dev/null 2>&1; rc=$?; set -e
   [[ "$rc" -eq "$expect_rc" ]] || { echo "[FAIL] $name: Exitcode $rc statt $expect_rc" >&2; exit 1; }

@@ -193,7 +193,9 @@ validate_resources(){
   (( SAFEBOX_OVERLAY_MAX_GIB >= 2 )) || die 'Overlay-Maximum zu klein'
   [[ "$SAFEBOX_NET_BACKEND" == qemu ]] || die 'SafeBox erlaubt ausschließlich SAFEBOX_NET_BACKEND=qemu'
   [[ "$SAFEBOX_REQUIRE_ENCRYPTED_STORAGE" == 1 ]] || die 'RC5 benötigt zwingend LUKS2-Storage'
-  [[ "$SAFEBOX_SAMPLE_MAX_MIB" =~ ^[0-9]+$ ]] && (( SAFEBOX_SAMPLE_MAX_MIB >= 1 && SAFEBOX_SAMPLE_MAX_MIB <= 512 )) || die 'Sample-Grenze ungültig' 
+  if ! [[ "$SAFEBOX_SAMPLE_MAX_MIB" =~ ^[0-9]+$ ]] || ! (( SAFEBOX_SAMPLE_MAX_MIB >= 1 && SAFEBOX_SAMPLE_MAX_MIB <= 512 )); then
+    die 'Sample-Grenze ungültig'
+  fi 
 }
 
 bytes_for_gib(){ printf '%s\n' $(( $1 * 1024 * 1024 * 1024 )); }
@@ -605,7 +607,11 @@ status_cmd(){
   else
     fw=FAIL
   fi
-  if "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/runtime-verify.sh" "$d" "$mode" "$disk" "$( [[ "$mode" == malware ]] && printf '%s.sample.iso' "$disk" || true )" >/dev/null 2>&1; then rt=PASS; fi
+  local sample_iso=""
+  if [[ "$mode" == malware ]]; then
+    sample_iso="$disk.sample.iso"
+  fi
+  if "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/runtime-verify.sh" "$d" "$mode" "$disk" "$sample_iso" >/dev/null 2>&1; then rt=PASS; fi
   if [[ "$mode" != installer ]] && "${SUDO[@]}" env SAFEBOX_CONFIG_FILE="$SAFEBOX_INSTALLED_CONFIG" /usr/bin/bash "$SAFEBOX_LIBEXEC/storage-verify.sh" "$d" "$mode" "$disk" >/dev/null 2>&1; then storage=PASS; fi
   pid="$(SAFEBOX_CONFIG_FILE="$ROOT/config/defaults.conf" /usr/bin/bash "$ROOT/tools/domain-pid.sh" "$d" 2>/dev/null || echo '?')"
   alloc="$("${SUDO[@]}" stat -c '%b %B' "$disk" 2>/dev/null | awk '{printf "%.2f", ($1*$2)/1024/1024/1024}' || echo '?')"
