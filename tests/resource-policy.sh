@@ -33,6 +33,7 @@ grep -Fq 'cleanup_cmd' "$ROOT/safebox"
 grep -Fq 'storage-verify.sh' "$ROOT/tools/runtime-watch.sh"
 grep -Fq 'kvm-qemu-safebox.lock' "$ROOT/systemd/safebox-tmpfiles.conf"
 grep -Fq 'Runtime-Identität' "$ROOT/tools/domain-pid.sh"
+# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
 grep -Fq 'identities/$DOMAIN.json' "$ROOT/tools/domain-pid.sh"
 grep -Fq 'record_domain_identity' "$ROOT/safebox"
 grep -Fq 'identities' "$ROOT/systemd/safebox-tmpfiles.conf"

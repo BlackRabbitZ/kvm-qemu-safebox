@@ -4,7 +4,7 @@ umask 077
 export LC_ALL=C
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=config/defaults.conf
+# shellcheck source=/dev/null
 source "$ROOT/config/defaults.conf"
 SUDO=(); [[ ${EUID} -eq 0 ]] || SUDO=(sudo)
 export SAFEBOX_NET_BACKEND
@@ -441,7 +441,9 @@ installed_helpers_ok(){
 }
 
 start_watch(){
-  local d=$1 m=$2 disk=$3 unit="safebox-watch-${d}" kill_unit i
+  local d=$1 m=$2 disk=$3
+  local unit="safebox-watch-${d}"
+  local kill_unit i
   command -v systemd-run >/dev/null || return 1
   installed_helpers_ok || { echo 'FEHLER: Root-owned Watchdog-Helfer fehlen/abweichend. install-host.sh erneut ausführen.' >&2; return 1; }
   "${SUDO[@]}" systemctl stop "$unit.service" >/dev/null 2>&1 || true

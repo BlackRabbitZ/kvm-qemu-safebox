@@ -29,6 +29,7 @@ for profile in hardened balanced performance; do
   echo "[PASS] Profil $profile verändert ausschließlich Ressourcenlimits."
 done
 
+# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
 grep -Fq 'apply_profile "$profile"' "$ROOT/safebox"
 grep -Fq 'hardened|balanced|performance' "$ROOT/safebox"
 echo '[PASS] Profile sind CLI-integriert und behalten die Sicherheitsgrenzen bei.'

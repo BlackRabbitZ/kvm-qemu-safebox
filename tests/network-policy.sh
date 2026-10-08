@@ -15,5 +15,8 @@ grep -Fq 'ip daddr @local_v4 drop' "$ROOT/network/apply-firewall.sh"
 grep -Fq "expected={'input':6,'output':7,'forward':16}" "$ROOT/tools/firewall-verify.sh"
 grep -Fq "sorted(['blocked_v4','host_v4','local_v4'])" "$ROOT/tools/firewall-verify.sh"
 grep -Fq "<dns enable='no'/>" "$ROOT/network/safebox-net.xml"
-! grep -Fq '<dhcp>' "$ROOT/network/safebox-net.xml"
+if grep -Fq '<dhcp>' "$ROOT/network/safebox-net.xml"; then
+  echo '[FAIL] DHCP ist entgegen der Netzwerk-Policy aktiviert.' >&2
+  exit 1
+fi
 echo '[PASS] Netzwerk-Policy v0.5.1-rc3.'

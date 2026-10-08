@@ -6,6 +6,7 @@ VERSION="$(tr -d '\n' <"$ROOT/VERSION")"
 [[ "$VERSION" == 0.5.1-rc5 ]] || { echo "[FAIL] VERSION=$VERSION" >&2; exit 1; }
 grep -Fq "SAFEBOX_VERSION=\"$VERSION\"" "$ROOT/config/defaults.conf"
 grep -Fq "version=$VERSION" "$ROOT/guest/harden.sh"
+# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
 grep -Fq 'version=$SAFEBOX_VERSION' "$ROOT/tools/verify-base-guest.sh"
 grep -Fq BlackRabbitZ "$ROOT/NOTICE"
 grep -Fq 'Esmaralda Haze' "$ROOT/README.md"

@@ -13,7 +13,9 @@ hash_xml(){
   python3 "${SAFEBOX_LIBEXEC:-/usr/local/libexec/safebox}/nwfilter-canon.py"
 }
 verify_one(){
-  local name=$1 source=$2 live actual expected
+  local name=$1
+  local source=$2
+  local live actual expected
   "${SUDO[@]}" test -r "$source" || { echo "[FAIL] nwfilter XML fehlt: $source" >&2; exit 1; }
   [[ "$("${SUDO[@]}" stat -c %U "$source")" == root ]] || { echo "[FAIL] nwfilter XML nicht root-owned: $source" >&2; exit 1; }
   live="$("${SUDO[@]}" virsh -c "$SAFEBOX_CONNECT_URI" nwfilter-dumpxml "$name" 2>/dev/null)" || { echo "[FAIL] nwfilter fehlt: $name" >&2; exit 1; }

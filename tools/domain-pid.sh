@@ -12,7 +12,11 @@ DOMAIN=${1:-}
 [[ "$DOMAIN" =~ ^safebox-[A-Za-z0-9._-]+$ ]] || { echo "FEHLER: Ungültiger Domainname: $DOMAIN" >&2; exit 2; }
 
 validate_pid_identity(){
-  local pid=$1 uuid=$2 expected_start=${3:-} start_before start_after exe cmdline found_uuid=0
+  local pid=$1
+  local uuid=$2
+  local expected_start=${3:-}
+  local start_before start_after exe cmdline
+  local found_uuid=0
   [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]] || return 1
   [[ "$uuid" =~ ^[0-9a-f-]{36}$ ]] || return 1
   "${SUDO[@]}" test -r "/proc/$pid/stat" || return 1

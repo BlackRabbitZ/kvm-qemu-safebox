@@ -48,8 +48,17 @@ esac
 EOFV
 chmod 0755 "$T/virsh"
 run_case(){
-  local name=$1 scenario=$2 expect_rc=$3 expect_kill=$4 pidrc=${5:-1} mock_name=${6:-} mock_value=${7:-} mode=${8:-offline}
-  local marker="$T/$name.kill" rc=0; rm -f "$marker"
+  local name=$1
+  local scenario=$2
+  local expect_rc=$3
+  local expect_kill=$4
+  local pidrc=${5:-1}
+  local mock_name=${6:-}
+  local mock_value=${7:-}
+  local mode=${8:-offline}
+  local marker="$T/$name.kill"
+  local rc=0
+  rm -f "$marker"
   local -a env_args=(SAFEBOX_TESTING=1 SAFEBOX_WATCH_MAX_LOOPS=1 SAFEBOX_VIRSH_BIN="$T/virsh" SAFEBOX_SLEEP_BIN=/bin/true SAFEBOX_TEST_KILL_MARKER="$marker" MOCK_VIRSH_SCENARIO="$scenario" MOCK_PID_RC="$pidrc" MOCK_PROC_RC="$([[ "$pidrc" == 0 ]] && echo 1 || echo 0)" SAFEBOX_CONFIG_FILE="$T/config.conf")
   [[ -z "$mock_name" ]] || env_args+=("$mock_name=$mock_value")
   set +e; env "${env_args[@]}" bash "$ROOT/tools/runtime-watch.sh" safebox-offline-test "$mode" /tmp/test.qcow2 >/dev/null 2>&1; rc=$?; set -e

@@ -13,7 +13,11 @@ for f in "$ROOT/vm/templates/runtime.xml.in" "$ROOT/vm/templates/installer.xml.i
   grep -Fq "<gl enable='no'/>" "$f"
 done
 for forbidden in '<hostdev' '<filesystem' '<channel' '<tpm' '<vsock' '<sound' '<rng' "model type='virtio' heads='1' primary='yes'"; do
-  ! grep -Fq "$forbidden" "$ROOT/vm/templates/runtime.xml.in"
+  # Forbid any matching element. Negation alone suppresses errexit (SC2251).
+  if grep -Fq -- "$forbidden" "$ROOT/vm/templates/runtime.xml.in"; then
+    printf '[FAIL] Unerlaubtes XML-Element: %s\n' "$forbidden" >&2
+    exit 1
+  fi
 done
 grep -Fq "CTRL_IP_LEARNING' value='none'" "$ROOT/safebox"
 grep -Fq 'SAFEBOX_LIBEXEC="/usr/local/libexec/safebox"' "$ROOT/config/defaults.conf"
@@ -23,6 +27,7 @@ grep -Fq 'SAFEBOX_NET_MODEL="e1000e"' "$ROOT/config/defaults.conf"
 grep -Fq 'SAFEBOX_DISK_BUS="sata"' "$ROOT/config/defaults.conf"
 grep -Fq 'qemu-system-modules-spice' "$ROOT/install/install-host.sh"
 grep -Fq 'qemu-security-check.sh' "$ROOT/safebox"
+# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
 grep -Fq "model/@type='\$SAFEBOX_NET_MODEL'" "$ROOT/tools/runtime-verify.sh"
 grep -Fq 'install -m 0755 -o root -g root' "$ROOT/install/install-runtime-helpers.sh"
 grep -Fq 'Restart=on-failure' "$ROOT/safebox"
@@ -35,5 +40,6 @@ grep -Fq "sets)!=sorted(['blocked_v4','host_v4','local_v4'])" "$ROOT/tools/firew
 grep -Fq "'(enforce)'" "$ROOT/tools/runtime-verify.sh"
 grep -Fq 'nwfilter-verify.sh' "$ROOT/tools/runtime-watch.sh"
 grep -Fq 'firewall-policy.sha256' "$ROOT/tools/firewall-verify.sh"
+# shellcheck disable=SC2016 -- Verbatim-Codefragment: absichtlich keine Variablenexpansion.
 grep -Fq 'git -C "$ROOT" verify-tag' "$ROOT/tools/verify-signed-tag.sh"
 echo '[PASS] Statische VM-Sicherheitsrichtlinie v0.5.1-rc3.'
