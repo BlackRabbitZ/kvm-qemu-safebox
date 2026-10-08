@@ -27,6 +27,7 @@
 > [!CAUTION]
 > **Release candidate — not approved for unknown, active malware.** Automated repository checks cannot establish security on an actual KVM host. RC5 adds a live test and a mandatory Security Gate; their results must be evaluated **on the intended host**. Passing does **not** guarantee protection against unknown VM escapes or compromised host firmware. For high-risk samples, use a **dedicated computer physically disconnected from other networks**.
 
+
 ## 📑 Table of Contents
 
 - [About the Project](#-about-the-project)
