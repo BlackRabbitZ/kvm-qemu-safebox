@@ -459,7 +459,7 @@ installed_helpers_ok(){
 start_watch(){
   local d=$1 m=$2 disk=$3
   local unit="safebox-watch-${d}"
-  local kill_unit i
+  local kill_unit attempt
   command -v systemd-run >/dev/null || return 1
   installed_helpers_ok || { echo 'FEHLER: Root-owned Watchdog-Helfer fehlen/abweichend. install-host.sh erneut ausführen.' >&2; return 1; }
   "${SUDO[@]}" systemctl stop "$unit.service" >/dev/null 2>&1 || true
@@ -489,7 +489,7 @@ start_watch(){
     --setenv=SAFEBOX_RUNTIME_MIN_FREE_GIB="$SAFEBOX_RUNTIME_MIN_FREE_GIB" \
     --setenv=SAFEBOX_OVERLAY_MAX_GIB="$SAFEBOX_OVERLAY_MAX_GIB" \
     -- "$SAFEBOX_LIBEXEC/runtime-watch.sh" "$d" "$m" "$disk" || return 1
-  for i in {1..30}; do
+  for (( attempt=0; attempt<30; attempt++ )); do
     if "${SUDO[@]}" systemctl is-active --quiet "$unit.service"; then return 0; fi
     sleep 0.1
   done
@@ -499,7 +499,7 @@ start_watch(){
 # RC4: No network capable runtime modes. Installer networking is only for trusted
 # OS bootstrap. Malware samples are never offered to installer/network domains.
 start_vm(){
-  local mode=${1:-offline} profile stamp domain disk meta xml vm sample='' sample_iso='' iso_block=''
+  local mode=${1:-offline} profile stamp domain disk meta xml sample='' sample_iso='' iso_block=''
   case "$mode" in
     offline) profile=${2:-hardened}; [[ $# -le 2 ]] || die 'offline [PROFIL]' ;;
     malware) sample=${2:-}; profile=${3:-hardened}; [[ -n "$sample" && $# -le 3 ]] || die 'malware DATEI [PROFIL]' ;;
@@ -670,7 +670,7 @@ security_check(){
       echo "[FAIL] Laufende Domain $d nicht attestiert"; fail=1
     fi
   done <<<"$running"
-  if ! proc_absent --all >/dev/null 2>&1 && [[ -z "$(grep '^safebox-' <<<"$running")" ]]; then
+  if ! proc_absent --all >/dev/null 2>&1 && ! grep -q '^safebox-' <<<"$running"; then
     echo '[FAIL] Verwaiste oder nicht lesbare SafeBox-QEMU-Prozesse'; fail=1
   fi
   if [[ ${EUID} -ne 0 ]] && id -nG "$USER" | tr ' ' '\n' | grep -Fxq libvirt; then echo '[FAIL] Aufrufender Benutzer ist Mitglied der privilegierten libvirt-Gruppe'; fail=1; else echo '[PASS] Keine dauerhaften libvirt-Gruppenrechte für den Aufrufer'; fi
