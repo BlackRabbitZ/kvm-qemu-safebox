@@ -12,6 +12,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      # Browser uploads and Windows Git checkouts can lose Unix +x bits.
+      # Restore a known, restricted set before the release policy verifies them.
+      - name: Normalize executable file modes
+        run: bash tools/normalize-executable-bits.sh
+
       - name: Install test tools
         run: sudo apt-get update && sudo apt-get install -y shellcheck libxml2-utils libvirt-clients
       - name: Bash syntax

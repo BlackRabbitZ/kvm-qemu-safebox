@@ -31,6 +31,13 @@ import sys,zipfile
 p,v=sys.argv[1:]; prefix=f'kvm-qemu-safebox-{v}/'
 with zipfile.ZipFile(p) as z:
     names=set(z.namelist())
+    for name in ('safebox', 'tools/build-release.sh', 'tools/generate-sbom.sh', 'tools/security_gate.py', 'tests/release-check.sh'):
+        info=z.getinfo(prefix+name)
+        assert info.create_system == 3, f'No Unix permission metadata: {name}'
+        assert ((info.external_attr >> 16) & 0o111) == 0o111, f'Missing executable bits in ZIP: {name}'
+    for name in ('README.md','config/defaults.conf'):
+        info=z.getinfo(prefix+name)
+        assert (info.external_attr >> 16) & 0o111 == 0, f'Unexpected executable bit in ZIP: {name}'
 for n in ('README.md','SECURITY.md','VERSION','safebox','profiles/hardened.conf'):
     assert prefix+n in names, n
 assert not any('/dist/' in x or '/.git/' in x for x in names)
